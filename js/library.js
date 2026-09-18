@@ -72,6 +72,17 @@
   function setListIds(id, ids) {
     if (lists[id]) { lists[id].ids = ids || []; saveLists(lists); }
   }
+  function setLists(next) {
+    if (!next || typeof next !== 'object') return;
+    var merged = {};
+    merged.all = (next.all && next.all.ids) ? next.all : { name: '全部', ids: [] };
+    merged.fav = (next.fav && next.fav.ids) ? next.fav : { name: '收藏', ids: [] };
+    Object.keys(next).forEach(function (k) {
+      if (k !== 'all' && k !== 'fav' && next[k] && next[k].ids) merged[k] = next[k];
+    });
+    lists = merged;
+    saveLists(lists);
+  }
 
   function isFav(id) { return lists.fav.ids.indexOf(id) >= 0; }
   function toggleFav(id) {
@@ -95,6 +106,6 @@
     addList: addList, renameList: renameList, removeList: removeList, listIds: listIds,
     addToList: addToList, removeFromList: removeFromList, isFav: isFav, toggleFav: toggleFav,
     loadRemote: loadRemote, saveRemote: saveRemote,
-    setListIds: setListIds
+    setListIds: setListIds, setLists: setLists
   };
 })(window);

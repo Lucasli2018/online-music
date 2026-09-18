@@ -6,6 +6,9 @@
   <title>珊瑚音乐 · Coral Music</title>
   <meta name="description" content="一个纯静态、可部署到 Cloudflare Pages 的在线音乐播放器" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%8A%3C/text%3E%3C/svg%3E" />
+  <meta name="theme-color" content="#ff7a45" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon.svg" />
   <link rel="stylesheet" href="css/style.css" />
   <!-- 防止深色模式闪烁：在样式应用前先读偏好 -->
   <script>
@@ -29,6 +32,8 @@
       <button id="btn-upload" class="btn btn-primary" title="从电脑上传音乐（持久化到浏览器）">＋ 上传音乐</button>
       <button id="btn-add-url" class="btn" title="通过链接添加远程歌曲">🔗 添加链接</button>
       <button id="btn-load-samples" class="btn" title="载入内置示例曲">🎵 示例曲</button>
+      <button id="btn-export" class="btn" title="导出歌单/远程歌曲/歌词为 JSON 备份">⤓ 备份</button>
+      <button id="btn-import" class="btn" title="从 JSON 备份恢复歌单">⤒ 恢复</button>
       <button id="btn-eq" class="btn" title="均衡器（仅本地歌曲生效）">🎚 EQ</button>
       <button id="btn-theme" class="btn btn-icon" title="切换深色 / 浅色">🌙</button>
     </div>
@@ -113,6 +118,8 @@
 
   <!-- 隐藏的文件选择器 -->
   <input id="file-input" type="file" accept="audio/*" multiple class="hidden" />
+  <!-- 隐藏的导入备份选择器 -->
+  <input id="import-input" type="file" accept="application/json,.json" class="hidden" />
 
   <!-- 添加链接弹窗 -->
   <div id="url-modal" class="modal hidden">

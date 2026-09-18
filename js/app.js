@@ -344,6 +344,67 @@
     } else finish();
   }
 
+  /* ---------- 歌单导出 / 导入（JSON 备份） ---------- */
+  function exportData() {
+    var data = {
+      app: 'coral-music',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      lists: JSON.parse(JSON.stringify(Lib.getLists())),
+      remote: Lib.loadRemote(),
+      lyrics: state.lyrics,
+      settings: {
+        theme: document.documentElement.getAttribute('data-theme'),
+        volume: (+$('volume').value) / 100,
+        eq: [+$('eq-low').value, +$('eq-mid').value, +$('eq-high').value]
+      }
+    };
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = global.URL.createObjectURL(blob);
+    a.download = 'coral-music-backup-' + Date.now() + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    global.URL.revokeObjectURL(a.href);
+    toast('已导出备份 JSON');
+  }
+  function applySettings(s) {
+    if (!s) return;
+    if (s.theme) {
+      document.documentElement.setAttribute('data-theme', s.theme);
+      try { localStorage.setItem('cm-theme', s.theme); } catch (e) {}
+      $('btn-theme').textContent = s.theme === 'dark' ? '☀️' : '🌙';
+    }
+    if (typeof s.volume === 'number') {
+      $('volume').value = Math.round(s.volume * 100);
+      CM.Player.setVolume(s.volume); saveVolume(s.volume);
+    }
+    if (Array.isArray(s.eq) && s.eq.length === 3) {
+      $('eq-low').value = s.eq[0]; $('eq-mid').value = s.eq[1]; $('eq-high').value = s.eq[2];
+      applyEQ();
+    }
+  }
+  function importData(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        if (data.app && data.app !== 'coral-music') { toast('文件格式不匹配'); return; }
+        if (data.lists) Lib.setLists(data.lists);
+        if (Array.isArray(data.remote)) Lib.saveRemote(data.remote);
+        if (data.lyrics && typeof data.lyrics === 'object') { state.lyrics = data.lyrics; saveLyrics(); }
+        applySettings(data.settings);
+        buildLibrary().then(function () {
+          state.currentListId = Lib.getCurrentList();
+          if (!Lib.getLists()[state.currentListId]) state.currentListId = 'all';
+          renderLibrary(); renderQueue();
+          toast('已导入备份，歌单与远程歌曲已恢复');
+        });
+      } catch (e) { toast('导入失败：JSON 解析错误'); }
+    };
+    reader.onerror = function () { toast('导入失败：无法读取文件'); };
+    reader.readAsText(file);
+  }
+
   /* ---------- 偏好持久化 ---------- */
   function loadLyrics() {
     try { state.lyrics = JSON.parse(localStorage.getItem('cm-lyrics') || '{}'); }
@@ -501,6 +562,15 @@
       renderLibrary(); renderTabs();
     });
 
+    // 歌单导出 / 导入
+    $('btn-export').addEventListener('click', exportData);
+    $('btn-import').addEventListener('click', function () { $('import-input').click(); });
+    $('import-input').addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (f) importData(f);
+      e.target.value = '';
+    });
+
     // 歌单
     $('btn-new-list').addEventListener('click', newList);
     $('search').addEventListener('input', function () { state.query = this.value; renderLibrary(); });
@@ -551,6 +621,13 @@
     });
 
     $('btn-theme').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+
+    // PWA：注册 Service Worker（离线可开 / 可安装到桌面）
+    if ('serviceWorker' in navigator) {
+      global.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () { /* 非 https/localhost 环境忽略 */ });
+      });
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

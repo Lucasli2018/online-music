@@ -1,0 +1,20 @@
+{
+  "name": "珊瑚音乐 · Coral Music",
+  "short_name": "珊瑚音乐",
+  "description": "纯静态在线音乐播放器（本地上传 / 示例曲 / 远程链接）",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fff7f2",
+  "theme_color": "#ff7a45",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    }
+  ]
+}
