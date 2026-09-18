@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>珊瑚音乐 · Coral Music</title>
+  <meta name="description" content="一个纯静态、可部署到 Cloudflare Pages 的在线音乐播放器" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%8A%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- 防止深色模式闪烁：在样式应用前先读偏好 -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('cm-theme');
+        if (t) document.documentElement.setAttribute('data-theme', t);
+        else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.setAttribute('data-theme', 'dark');
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-logo">🍊</span>
+      <span class="brand-name">珊瑚音乐</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-upload" class="btn btn-primary" title="从电脑上传音乐（持久化到浏览器）">＋ 上传音乐</button>
+      <button id="btn-add-url" class="btn" title="通过链接添加远程歌曲">🔗 添加链接</button>
+      <button id="btn-load-samples" class="btn" title="载入内置示例曲">🎵 示例曲</button>
+      <button id="btn-theme" class="btn btn-icon" title="切换深色 / 浅色">🌙</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 播放列表 -->
+    <section class="panel playlist-panel">
+      <div class="panel-head">
+        <h2>播放列表</h2>
+        <div class="playlist-tools">
+          <button id="btn-shuffle" class="chip" title="随机播放">🔀</button>
+          <button id="btn-repeat" class="chip" title="循环模式：关 / 单曲 / 列表">🔁</button>
+        </div>
+      </div>
+      <ul id="playlist" class="playlist"></ul>
+      <p id="playlist-empty" class="empty-hint">列表空空如也～ 点击右上角「上传音乐」或「示例曲」开始吧</p>
+    </section>
+
+    <!-- 正在播放 -->
+    <section class="panel now-panel">
+      <div class="cover-wrap">
+        <canvas id="visualizer" class="visualizer"></canvas>
+        <div id="cover" class="cover" aria-label="封面">
+          <span class="cover-note">🍊</span>
+        </div>
+      </div>
+      <div class="now-meta">
+        <h1 id="track-title" class="track-title">未在播放</h1>
+        <p id="track-artist" class="track-artist">选择一首歌开始享受</p>
+      </div>
+
+      <div class="progress-row">
+        <span id="time-current" class="time">0:00</span>
+        <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" />
+        <span id="time-total" class="time">0:00</span>
+      </div>
+
+      <div class="controls">
+        <button id="btn-prev" class="ctrl" title="上一首">⏮</button>
+        <button id="btn-play" class="ctrl ctrl-main" title="播放 / 暂停">▶</button>
+        <button id="btn-next" class="ctrl" title="下一首">⏭</button>
+        <div class="volume">
+          <span class="vol-icon">🔊</span>
+          <input id="volume" class="vol-slider" type="range" min="0" max="100" value="80" />
+        </div>
+        <button id="btn-lyrics" class="ctrl ctrl-side" title="歌词">词</button>
+      </div>
+    </section>
+
+    <!-- 歌词 -->
+    <section id="lyrics-panel" class="panel lyrics-panel hidden">
+      <div class="panel-head">
+        <h2>歌词</h2>
+        <button id="btn-lyrics-edit" class="chip" title="为当前歌曲粘贴 LRC 歌词">✎ 编辑</button>
+      </div>
+      <div id="lyrics" class="lyrics"><p class="lyrics-empty">暂无歌词。点击「编辑」粘贴 LRC 文本，或添加链接时填写歌词地址。</p></div>
+    </section>
+  </main>
+
+  <!-- 隐藏的文件选择器 -->
+  <input id="file-input" type="file" accept="audio/*" multiple class="hidden" />
+
+  <!-- 添加链接弹窗 -->
+  <div id="url-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>添加远程歌曲</h3>
+      <label>歌曲链接（mp3 / m4a 等直链）</label>
+      <input id="url-input" type="text" placeholder="https://example.com/song.mp3" />
+      <label>标题（可选）</label>
+      <input id="url-title" type="text" placeholder="歌曲名" />
+      <label>歌手（可选）</label>
+      <input id="url-artist" type="text" placeholder="歌手" />
+      <label>歌词 LRC 链接（可选）</label>
+      <input id="url-lrc" type="text" placeholder="https://example.com/song.lrc" />
+      <div class="modal-actions">
+        <button id="url-cancel" class="btn">取消</button>
+        <button id="url-ok" class="btn btn-primary">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 歌词编辑弹窗 -->
+  <div id="lrc-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>编辑歌词（LRC 格式）</h3>
+      <textarea id="lrc-input" rows="12" placeholder="[00:00.00] 作词 : xxx&#10;[00:04.50] 第一句歌词&#10;[00:09.00] 第二句歌词"></textarea>
+      <div class="modal-actions">
+        <button id="lrc-cancel" class="btn">取消</button>
+        <button id="lrc-ok" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/samples.js"></script>
+  <script src="js/lyrics.js"></script>
+  <script src="js/visualizer.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/playlist.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
