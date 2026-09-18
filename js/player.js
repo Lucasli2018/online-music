@@ -28,6 +28,7 @@
     (handlers[name] || []).forEach(function (fn) { fn.apply(null, args); });
   }
 
+  var eqFilters = null;
   function ensureAudioGraph() {
     if (audioCtx) return;
     var AC = global.AudioContext || global.webkitAudioContext;
@@ -35,9 +36,13 @@
     audioCtx = new AC();
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
-    analyser.connect(audioCtx.destination);
     srcLocal = audioCtx.createMediaElementSource(audioLocal);
-    srcLocal.connect(analyser);
+    // EQ 三段：低频 shelf / 中频 peaking / 高频 shelf（仅作用于本地歌链路）
+    var fLow = audioCtx.createBiquadFilter(); fLow.type = 'lowshelf'; fLow.frequency.value = 200;
+    var fMid = audioCtx.createBiquadFilter(); fMid.type = 'peaking'; fMid.frequency.value = 1000; fMid.Q.value = 1;
+    var fHigh = audioCtx.createBiquadFilter(); fHigh.type = 'highshelf'; fHigh.frequency.value = 3200;
+    eqFilters = [fLow, fMid, fHigh];
+    srcLocal.connect(fLow); fLow.connect(fMid); fMid.connect(fHigh); fHigh.connect(analyser); analyser.connect(audioCtx.destination);
   }
 
   function getUrl(track) {
@@ -184,6 +189,37 @@
     setIndex: function (i) { index = i; },
     getTrack: function () { return playlist[index]; },
     revokeUrl: revokeUrl,
-    clearProgress: clearProgress
+    clearProgress: clearProgress,
+    queuePush: function (track) { if (track) playlist.push(track); },
+    queueInsertNext: function (track) {
+      if (!track) return;
+      if (index < 0) { playlist.unshift(track); loadIndex(0, true); }
+      else playlist.splice(index + 1, 0, track);
+    },
+    getQueue: function () { return playlist; },
+    queueRemove: function (i) {
+      if (i < 0 || i >= playlist.length) return;
+      playlist.splice(i, 1);
+      if (i < index) index--;
+      else if (i === index) {
+        if (playlist.length) loadIndex(Math.min(i, playlist.length - 1), false);
+        else { index = -1; if (CM.Visualizer && CM.Visualizer.stop) CM.Visualizer.stop(); emit('playlistEnd'); }
+      }
+    },
+    queueMove: function (from, to) {
+      if (from < 0 || to < 0 || from >= playlist.length || to >= playlist.length) return;
+      if (from === to) return;
+      var moved = playlist.splice(from, 1)[0];
+      playlist.splice(to, 0, moved);
+      if (index === from) index = to;
+      else if (from < index && index <= to) index++;
+      else if (to <= index && index < from) index--;
+    },
+    setEQ: function (gains) {
+      if (!eqFilters || !gains) return;
+      eqFilters[0].gain.value = gains[0] || 0;
+      eqFilters[1].gain.value = gains[1] || 0;
+      eqFilters[2].gain.value = gains[2] || 0;
+    }
   };
 })(window);

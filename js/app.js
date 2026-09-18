@@ -1,12 +1,19 @@
-/* app.js — 总控：装配存储 / 播放 / 列表 / 歌词 / 主题 */
+/* app.js — 总控：曲库 + 歌单 + 队列 + 搜索 + 收藏 + 歌词 + 主题
+ * 阶段 2 数据模型：
+ *   曲库（CM.Library.tracks）是歌曲单一事实源；歌单只存 id 引用。
+ *   左栏浏览某个歌单（全部/收藏/自定义）+ 搜索过滤；点歌即从该视图起播。
+ *   右栏「队列」是独立的播放顺序，可追加/插队/拖拽重排/移除。
+ */
 (function (global) {
   'use strict';
 
   var CM = global.CM;
+  var Lib = CM.Library;
+
   var state = {
-    master: [],          // 当前播放列表（单一数据源）
-    remote: [],          // 远程链接歌（持久化）
-    lyrics: {},          // trackId -> lrc 文本
+    currentListId: 'all',   // 当前浏览的歌单 tab
+    query: '',              // 搜索关键字
+    lyrics: {},             // trackId -> lrc 文本
     currentTrackId: null,
     currentLines: [],
     currentLineEls: [],
@@ -30,6 +37,7 @@
   function $(id) { return document.getElementById(id); }
   function toast(msg) {
     var t = $('toast');
+    if (!t) return;
     t.textContent = msg; t.classList.remove('hidden');
     clearTimeout(toast._t);
     toast._t = setTimeout(function () { t.classList.add('hidden'); }, 2200);
@@ -40,91 +48,200 @@
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
-  /* ---------- 持久化 ---------- */
-  function loadRemote() {
-    try { state.remote = JSON.parse(localStorage.getItem('cm-remote') || '[]'); }
-    catch (e) { state.remote = []; }
-    if (!Array.isArray(state.remote)) state.remote = [];
+  /* ---------- 曲库装配 ---------- */
+  function addLocalRecord(rec) {
+    rec.source = 'local'; rec.cover = rec.cover || pickCover(rec.id);
+    Lib.addTrack(rec);
   }
-  function saveRemote() {
-    try { localStorage.setItem('cm-remote', JSON.stringify(state.remote)); } catch (e) {}
+  function addRemoteRecord(rec) {
+    rec.cover = rec.cover || pickCover(rec.id);
+    Lib.addTrack(rec);
   }
-  function loadLyrics() {
-    try { state.lyrics = JSON.parse(localStorage.getItem('cm-lyrics') || '{}'); }
-    catch (e) { state.lyrics = {}; }
+  function addSampleRecord(s) {
+    Lib.addTrack(Object.assign({}, s, { cover: s.cover || pickCover(s.id) }));
   }
-  function saveLyrics() {
-    try { localStorage.setItem('cm-lyrics', JSON.stringify(state.lyrics)); } catch (e) {}
+  function persistRemote() {
+    Lib.saveRemote(Lib.allTracks().filter(function (t) { return t.source === 'remote'; }));
   }
-  function loadSettings() {
-    try {
-      var v = parseFloat(localStorage.getItem('cm-volume'));
-      if (!isNaN(v)) { $('volume').value = Math.round(v * 100); CM.Player.setVolume(v); }
-    } catch (e) {}
+  function buildLibrary() {
+    return CM.Storage.getAll().then(onLocalLoaded, function () { onLocalLoaded([]); });
   }
-  function saveVolume(v) { try { localStorage.setItem('cm-volume', String(v)); } catch (e) {} }
+  function onLocalLoaded(local) {
+    (local || []).forEach(addLocalRecord);
+    Lib.loadRemote().forEach(addRemoteRecord);
+    var firstRun = true;
+    try { firstRun = !localStorage.getItem('cm-init'); } catch (e) {}
+    if (firstRun) {
+      CM.samples.forEach(addSampleRecord);
+      try { localStorage.setItem('cm-init', '1'); } catch (e) {}
+    }
+  }
 
-  /* ---------- 列表重建 ---------- */
-  function rebuild() {
-    CM.Player.setPlaylist(state.master);
-    CM.Playlist.render(state.master, CM.Player.getIndex());
+  /* ---------- 可见曲目（当前歌单 + 搜索） ---------- */
+  function getVisibleTracks() {
+    var tracks = Lib.resolve(Lib.listIds(state.currentListId));
+    var q = state.query.trim().toLowerCase();
+    if (q) {
+      tracks = tracks.filter(function (t) {
+        return (t.title || '').toLowerCase().indexOf(q) >= 0 ||
+               (t.artist || '').toLowerCase().indexOf(q) >= 0;
+      });
+    }
+    return tracks;
   }
 
-  function appendLocal(record) {
-    state.master.push(record);
-    CM.Storage.put(record).catch(function () { toast('本地保存失败（浏览器存储不可用）'); });
-    rebuild();
-  }
-  function addSampleIfAbsent() {
-    var have = {};
-    state.master.forEach(function (t) { have[t.id] = true; });
-    var added = 0;
-    CM.samples.forEach(function (s) {
-      if (!have[s.id]) {
-        var rec = Object.assign({}, s, { cover: s.cover || pickCover(s.id) });
-        state.master.push(rec); added++;
-      }
+  /* ---------- 左栏渲染 ---------- */
+  function renderLibrary() {
+    renderTabs();
+    var tracks = getVisibleTracks();
+    var cur = CM.Player.getTrack();
+    var hi = -1;
+    if (cur) for (var k = 0; k < tracks.length; k++) { if (tracks[k].id === cur.id) { hi = k; break; } }
+    CM.Playlist.render(tracks, hi, {
+      onPlay: playFromTrack,
+      onFav: toggleFav,
+      onMenu: openAddMenu,
+      onRemove: removeTrack
     });
-    if (added) { rebuild(); toast('已载入 ' + added + ' 首示例曲'); }
-    else toast('示例曲已在列表中');
   }
-  function removeTrack(id, i) {
-    var track = state.master[i];
-    if (!track) return;
-    if (track.source === 'local') {
-      CM.Storage.del(id).catch(function () {});
-      CM.Player.revokeUrl(id);
-    } else if (track.source === 'remote') {
-      state.remote = state.remote.filter(function (r) { return r.id !== id; });
-      saveRemote();
-    }
-    CM.Player.clearProgress(id);
-    state.master.splice(i, 1);
-    var cur = CM.Player.getIndex();
-    if (cur === i) {
-      CM.Player.pause();
-      if (state.master.length) CM.Player.loadIndex(Math.min(i, state.master.length - 1), false);
-      else { $('track-title').textContent = '未在播放'; $('track-artist').textContent = '选择一首歌开始享受'; $('time-current').textContent = '0:00'; $('time-total').textContent = '0:00'; $('seek').value = 0; CM.Playlist.setCurrent(-1); }
-    } else if (cur > i) {
-      CM.Player.setIndex(cur - 1);
-    }
-    rebuild();
+  function renderTabs() {
+    var box = $('list-tabs');
+    if (!box) return;
+    box.innerHTML = '';
+    var lists = Lib.getLists();
+    var order = ['all', 'fav'].concat(Object.keys(lists).filter(function (k) { return k !== 'all' && k !== 'fav'; }));
+    order.forEach(function (id) {
+      var li = lists[id];
+      if (!li) return;
+      var tab = document.createElement('button');
+      tab.className = 'list-tab' + (id === state.currentListId ? ' active' : '');
+      tab.appendChild(document.createTextNode(li.name + ' '));
+      var cnt = document.createElement('span');
+      cnt.className = 'list-tab-count';
+      cnt.textContent = (li.ids ? li.ids.length : 0);
+      tab.appendChild(cnt);
+      if (id !== 'all' && id !== 'fav') {
+        var x = document.createElement('span');
+        x.className = 'tab-del'; x.title = '删除歌单'; x.textContent = '✕';
+        x.addEventListener('click', function (e) { e.stopPropagation(); removeList(id); });
+        tab.appendChild(x);
+      }
+      tab.addEventListener('click', function () { switchList(id); });
+      box.appendChild(tab);
+    });
   }
-  function reorder(from, to) {
-    if (from < 0 || to < 0 || from >= state.master.length || to >= state.master.length) return;
-    var cur = CM.Player.getIndex();
-    var moved = state.master.splice(from, 1)[0];
-    state.master.splice(to, 0, moved);
-    // 修正当前索引（不重载，避免打断播放）
-    if (cur === from) cur = to;
-    else if (from < cur && cur <= to) cur--;
-    else if (to <= cur && cur < from) cur++;
-    CM.Player.setPlaylist(state.master);
-    CM.Player.setIndex(cur);
-    CM.Playlist.render(state.master, cur);
+  function switchList(id) {
+    state.currentListId = id;
+    Lib.setCurrentList(id);
+    renderLibrary();
+  }
+  function removeList(id) {
+    var li = Lib.getList(id);
+    if (!li) return;
+    if (!global.confirm('删除歌单「' + li.name + '」？歌曲不会被移出曲库。')) return;
+    Lib.removeList(id);
+    if (state.currentListId === id) state.currentListId = 'all';
+    renderLibrary();
+  }
+  function newList() {
+    var name = global.prompt('新歌单名称：', '我的歌单');
+    if (!name) return;
+    var id = Lib.addList(name);
+    state.currentListId = id; Lib.setCurrentList(id);
+    renderLibrary();
   }
 
-  function playAt(i) { CM.Player.loadIndex(i, true); }
+  /* ---------- 播放 / 队列 ---------- */
+  function playFromTrack(track) {
+    var vis = getVisibleTracks();
+    CM.Player.setPlaylist(vis);
+    var i = -1;
+    for (var k = 0; k < vis.length; k++) { if (vis[k].id === track.id) { i = k; break; } }
+    if (i < 0) i = 0;
+    CM.Player.loadIndex(i, true);
+    renderQueue();
+  }
+  function addToQueue(track) {
+    CM.Player.queuePush(track);
+    renderQueue();
+    toast('已加入队列');
+  }
+  function playNext(track) {
+    CM.Player.queueInsertNext(track);
+    renderQueue();
+    toast('将播放下一首');
+  }
+  function renderQueue() {
+    var q = CM.Player.getQueue();
+    CM.Queue.render(q, CM.Player.getIndex());
+  }
+  function clearQueue() {
+    CM.Player.pause();
+    CM.Player.setPlaylist([]);
+    CM.Player.setIndex(-1);
+    if (CM.Visualizer && CM.Visualizer.stop) CM.Visualizer.stop();
+    renderQueue();
+    toast('队列已清空');
+  }
+
+  /* ---------- 收藏 / 移除 ---------- */
+  function toggleFav(track) {
+    var on = Lib.toggleFav(track.id);
+    toast(on ? '已收藏 ♥' : '已取消收藏');
+    renderLibrary();
+  }
+  function removeTrack(track) {
+    if (track.source === 'local') {
+      CM.Storage.del(track.id).catch(function () {});
+      CM.Player.revokeUrl(track.id);
+    }
+    Lib.removeTrack(track.id);
+    if (track.source === 'remote') persistRemote();
+    CM.Player.clearProgress(track.id);
+
+    var cur = CM.Player.getTrack();
+    if (cur && cur.id === track.id) {
+      CM.Player.pause();
+      var q = CM.Player.getQueue();
+      var qi = -1;
+      for (var k = 0; k < q.length; k++) { if (q[k].id === track.id) { qi = k; break; } }
+      if (qi >= 0) CM.Player.queueRemove(qi);
+    }
+    renderLibrary(); renderTabs(); renderQueue();
+  }
+
+  /* ---------- 加入歌单菜单 ---------- */
+  function closeAddMenu() {
+    var m = document.querySelector('.add-menu');
+    if (m) m.parentNode.removeChild(m);
+  }
+  function openAddMenu(track, x, y) {
+    closeAddMenu();
+    var lists = Lib.getLists();
+    var custom = Object.keys(lists).filter(function (k) { return k !== 'all' && k !== 'fav'; });
+    var menu = document.createElement('div');
+    menu.className = 'add-menu';
+    menu.style.left = Math.max(8, x) + 'px';
+    menu.style.top = Math.max(8, y) + 'px';
+    function item(label, fn) {
+      var b = document.createElement('button');
+      b.className = 'add-menu-item'; b.textContent = label;
+      b.addEventListener('click', function (e) { e.stopPropagation(); fn(); closeAddMenu(); });
+      menu.appendChild(b);
+    }
+    item('⤵ 加入队列', function () { addToQueue(track); });
+    item('⏭ 下一首播放', function () { playNext(track); });
+    if (!custom.length) item('（无自定义歌单，点顶栏 ＋ 新建）', function () {});
+    custom.forEach(function (id) {
+      item('＋ 加入「' + lists[id].name + '」', function () {
+        Lib.addToList(id, track.id);
+        renderTabs();
+        toast('已加入「' + lists[id].name + '」');
+      });
+    });
+    document.body.appendChild(menu);
+    setTimeout(function () { document.addEventListener('click', closeAddMenu, { once: true }); }, 0);
+  }
 
   /* ---------- 歌词 ---------- */
   function showLyricsFor(track) {
@@ -135,6 +252,7 @@
   }
   function renderLyrics(lines) {
     var box = $('lyrics');
+    if (!box) return;
     box.innerHTML = '';
     state.currentLineEls = [];
     if (!lines.length) {
@@ -157,9 +275,7 @@
     var els = state.currentLineEls;
     els.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
     var active = els[idx];
-    if (active && active.scrollIntoView) {
-      active.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   /* ---------- 主题 ---------- */
@@ -171,9 +287,40 @@
     if (CM.Visualizer) CM.Visualizer.resize();
   }
 
+  /* ---------- 侧栏切换（歌词 / 队列） ---------- */
+  function showSide(which) {
+    $('lyrics-view').classList.toggle('hidden', which !== 'lyrics');
+    $('queue-view').classList.toggle('hidden', which !== 'queue');
+    document.querySelectorAll('.panel-tab').forEach(function (t) {
+      t.classList.toggle('active', t.getAttribute('data-panel') === which);
+    });
+  }
+
+  /* ---------- EQ ---------- */
+  function loadEQ() {
+    try {
+      var g = JSON.parse(localStorage.getItem('cm-eq') || 'null');
+      if (g && g.length === 3) {
+        $('eq-low').value = g[0]; $('eq-mid').value = g[1]; $('eq-high').value = g[2];
+        applyEQ();
+      }
+    } catch (e) {}
+  }
+  function applyEQ() {
+    var g = [+$('eq-low').value, +$('eq-mid').value, +$('eq-high').value];
+    CM.Player.setEQ(g);
+    $('eq-low-val').textContent = (g[0] > 0 ? '+' : '') + g[0];
+    $('eq-mid-val').textContent = (g[1] > 0 ? '+' : '') + g[1];
+    $('eq-high-val').textContent = (g[2] > 0 ? '+' : '') + g[2];
+    try { localStorage.setItem('cm-eq', JSON.stringify(g)); } catch (e) {}
+  }
+
   /* ---------- 添加链接 ---------- */
   function openUrlModal() { $('url-modal').classList.remove('hidden'); }
-  function closeUrlModal() { $('url-modal').classList.add('hidden'); $('url-input').value = ''; $('url-title').value = ''; $('url-artist').value = ''; $('url-lrc').value = ''; }
+  function closeUrlModal() {
+    $('url-modal').classList.add('hidden');
+    $('url-input').value = ''; $('url-title').value = ''; $('url-artist').value = ''; $('url-lrc').value = '';
+  }
   function submitUrl() {
     var url = $('url-input').value.trim();
     if (!url) { toast('请填写歌曲链接'); return; }
@@ -182,13 +329,14 @@
       id: id,
       title: $('url-title').value.trim() || url.split('/').pop().split('?')[0] || '远程歌曲',
       artist: $('url-artist').value.trim() || '未知歌手',
-      url: url,
-      cover: pickCover(id),
-      source: 'remote',
-      addedAt: Date.now()
+      url: url, cover: pickCover(id), source: 'remote', addedAt: Date.now()
     };
     var lrcUrl = $('url-lrc').value.trim();
-    function finish() { state.remote.push(rec); saveRemote(); state.master.push(rec); rebuild(); closeUrlModal(); toast('已添加：' + rec.title); }
+    function finish() {
+      addRemoteRecord(rec); persistRemote();
+      renderLibrary(); renderTabs(); closeUrlModal();
+      toast('已添加：' + rec.title);
+    }
     if (lrcUrl) {
       fetch(lrcUrl).then(function (r) { return r.text(); }).then(function (txt) {
         state.lyrics[id] = txt; saveLyrics(); rec.lrc = txt; finish();
@@ -196,27 +344,41 @@
     } else finish();
   }
 
+  /* ---------- 偏好持久化 ---------- */
+  function loadLyrics() {
+    try { state.lyrics = JSON.parse(localStorage.getItem('cm-lyrics') || '{}'); }
+    catch (e) { state.lyrics = {}; }
+  }
+  function saveLyrics() {
+    try { localStorage.setItem('cm-lyrics', JSON.stringify(state.lyrics)); } catch (e) {}
+  }
+  function loadSettings() {
+    try {
+      var v = parseFloat(localStorage.getItem('cm-volume'));
+      if (!isNaN(v)) { $('volume').value = Math.round(v * 100); CM.Player.setVolume(v); }
+    } catch (e) {}
+  }
+  function saveVolume(v) { try { localStorage.setItem('cm-volume', String(v)); } catch (e) {} }
+
   /* ---------- 初始化 ---------- */
   function init() {
     CM.Visualizer.init($('visualizer'));
     CM.Player.init();
-    CM.Playlist.init({ onPlay: playAt, onRemove: removeTrack, onReorder: reorder });
-
-    loadRemote(); loadLyrics(); loadSettings();
-
-    // 本地歌曲（异步）
-    CM.Storage.getAll().then(function (local) {
-      local.forEach(function (r) {
-        r.source = 'local';
-        r.cover = r.cover || pickCover(r.id);
-        state.master.push(r);
-      });
-      // 若列表仍为空，自动载入示例曲，避免开屏空白
-      if (!state.master.length) addSampleIfAbsent();
-      else rebuild();
-    }).catch(function () {
-      if (!state.master.length) addSampleIfAbsent(); else rebuild();
+    CM.Playlist.init();
+    CM.Queue.init({
+      onPlayAt: function (i) { CM.Player.loadIndex(i, true); renderQueue(); },
+      onRemove: function (i) { CM.Player.queueRemove(i); renderQueue(); },
+      onReorder: function (from, to) { CM.Player.queueMove(from, to); renderQueue(); }
     });
+
+    loadLyrics(); loadSettings();
+    loadEQ();
+
+    state.currentListId = Lib.getCurrentList();
+    var lists = Lib.getLists();
+    if (!lists[state.currentListId]) state.currentListId = 'all';
+
+    buildLibrary().then(function () { renderLibrary(); renderQueue(); });
 
     // 播放器事件
     CM.Player.on('track', function (track) {
@@ -231,7 +393,8 @@
         cover.style.backgroundImage = '';
         cover.style.background = track.cover || pickCover(track.id);
       }
-      CM.Playlist.setCurrent(CM.Player.getIndex());
+      CM.Playlist.setCurrentById(track.id);
+      CM.Queue.setCurrent(CM.Player.getIndex());
       showLyricsFor(track);
       $('btn-play').textContent = '⏸';
     });
@@ -241,7 +404,6 @@
       if (dur > 0 && !seeking) $('seek').value = Math.round((cur / dur) * 1000);
       syncLyrics(cur);
     });
-    CM.Player.on('meta', function () {});
     CM.Player.on('state', function (playing) {
       $('btn-play').textContent = playing ? '⏸' : '▶';
       $('cover').classList.toggle('spin', playing);
@@ -291,10 +453,12 @@
 
     $('btn-lyrics').addEventListener('click', function () {
       state.lyricsOn = !state.lyricsOn;
-      $('lyrics-panel').classList.toggle('hidden', !state.lyricsOn);
       this.classList.toggle('active', state.lyricsOn);
-      if (state.lyricsOn) syncLyrics(CM.Player.getTrack() ? 0 : 0);
+      showSide('lyrics');
+      if (state.lyricsOn) syncLyrics(0);
     });
+    $('btn-eq').addEventListener('click', function () { $('eq-modal').classList.remove('hidden'); });
+    $('btn-queue-tab').addEventListener('click', function () { showSide('queue'); });
 
     $('btn-theme').addEventListener('click', toggleTheme);
 
@@ -309,14 +473,15 @@
           title: name, artist: '本地', file: f,
           cover: pickCover(name), source: 'local', addedAt: Date.now()
         };
-        if (CM.ID3) {
-          CM.ID3.parseCover(f).then(function (url) {
-            if (url) rec.cover = url;
-            appendLocal(rec);
-          }).catch(function () { appendLocal(rec); });
-        } else {
-          appendLocal(rec);
+        function add() {
+          addLocalRecord(rec);
+          CM.Storage.put(rec).catch(function () { toast('本地保存失败（浏览器存储不可用）'); });
+          renderLibrary(); renderQueue();
         }
+        if (CM.ID3) {
+          CM.ID3.parseCover(f).then(function (url) { if (url) rec.cover = url; add(); })
+            .catch(function () { add(); });
+        } else add();
       });
       e.target.value = '';
       if (files.length) toast('已添加 ' + files.length + ' 首本地歌曲');
@@ -327,7 +492,36 @@
     $('url-ok').addEventListener('click', submitUrl);
     $('url-modal').addEventListener('click', function (e) { if (e.target === this) closeUrlModal(); });
 
-    $('btn-load-samples').addEventListener('click', addSampleIfAbsent);
+    $('btn-load-samples').addEventListener('click', function () {
+      var have = {};
+      Lib.allTracks().forEach(function (t) { if (t.source === 'sample') have[t.id] = true; });
+      var added = 0;
+      CM.samples.forEach(function (s) { if (!have[s.id]) { addSampleRecord(s); added++; } });
+      if (added) toast('已载入 ' + added + ' 首示例曲'); else toast('示例曲已在列表中');
+      renderLibrary(); renderTabs();
+    });
+
+    // 歌单
+    $('btn-new-list').addEventListener('click', newList);
+    $('search').addEventListener('input', function () { state.query = this.value; renderLibrary(); });
+
+    // 队列
+    $('btn-queue-clear').addEventListener('click', clearQueue);
+
+    // EQ
+    $('eq-low').addEventListener('input', applyEQ);
+    $('eq-mid').addEventListener('input', applyEQ);
+    $('eq-high').addEventListener('input', applyEQ);
+    $('eq-reset').addEventListener('click', function () {
+      $('eq-low').value = 0; $('eq-mid').value = 0; $('eq-high').value = 0; applyEQ(); toast('EQ 已重置');
+    });
+    $('eq-close').addEventListener('click', function () { $('eq-modal').classList.add('hidden'); });
+    $('eq-modal').addEventListener('click', function (e) { if (e.target === this) this.classList.add('hidden'); });
+
+    // 侧栏 tab
+    document.querySelectorAll('.panel-tab').forEach(function (t) {
+      t.addEventListener('click', function () { showSide(t.getAttribute('data-panel')); });
+    });
 
     // 歌词编辑
     $('btn-lyrics-edit').addEventListener('click', function () {
@@ -356,7 +550,6 @@
       else if (e.code === 'ArrowLeft') CM.Player.prev();
     });
 
-    // 初始化主题按钮图标
     $('btn-theme').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
   }
 

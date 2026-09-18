@@ -29,19 +29,27 @@
       <button id="btn-upload" class="btn btn-primary" title="从电脑上传音乐（持久化到浏览器）">＋ 上传音乐</button>
       <button id="btn-add-url" class="btn" title="通过链接添加远程歌曲">🔗 添加链接</button>
       <button id="btn-load-samples" class="btn" title="载入内置示例曲">🎵 示例曲</button>
+      <button id="btn-eq" class="btn" title="均衡器（仅本地歌曲生效）">🎚 EQ</button>
       <button id="btn-theme" class="btn btn-icon" title="切换深色 / 浅色">🌙</button>
     </div>
   </header>
 
   <main class="layout">
-    <!-- 播放列表 -->
+    <!-- 曲库 / 歌单 -->
     <section class="panel playlist-panel">
       <div class="panel-head">
-        <h2>播放列表</h2>
+        <h2>曲库</h2>
         <div class="playlist-tools">
           <button id="btn-shuffle" class="chip" title="随机播放">🔀</button>
           <button id="btn-repeat" class="chip" title="循环模式：关 / 单曲 / 列表">🔁</button>
         </div>
+      </div>
+      <div class="list-bar">
+        <div id="list-tabs" class="list-tabs"></div>
+        <button id="btn-new-list" class="chip" title="新建歌单">＋</button>
+      </div>
+      <div class="search-wrap">
+        <input id="search" class="search" type="text" placeholder="🔍 搜索歌名 / 歌手" />
       </div>
       <ul id="playlist" class="playlist"></ul>
       <p id="playlist-empty" class="empty-hint">列表空空如也～ 点击右上角「上传音乐」或「示例曲」开始吧</p>
@@ -75,16 +83,31 @@
           <input id="volume" class="vol-slider" type="range" min="0" max="100" value="80" />
         </div>
         <button id="btn-lyrics" class="ctrl ctrl-side" title="歌词">词</button>
+        <button id="btn-queue-tab" class="ctrl ctrl-side" title="播放队列">列</button>
       </div>
     </section>
 
-    <!-- 歌词 -->
-    <section id="lyrics-panel" class="panel lyrics-panel hidden">
-      <div class="panel-head">
-        <h2>歌词</h2>
-        <button id="btn-lyrics-edit" class="chip" title="为当前歌曲粘贴 LRC 歌词">✎ 编辑</button>
+    <!-- 侧栏：歌词 / 队列 -->
+    <section class="panel side-panel">
+      <div class="panel-tabs">
+        <button class="panel-tab active" data-panel="lyrics">歌词</button>
+        <button class="panel-tab" data-panel="queue">队列</button>
       </div>
-      <div id="lyrics" class="lyrics"><p class="lyrics-empty">暂无歌词。点击「编辑」粘贴 LRC 文本，或添加链接时填写歌词地址。</p></div>
+      <div id="lyrics-view" class="side-view">
+        <div class="panel-head">
+          <h2>歌词</h2>
+          <button id="btn-lyrics-edit" class="chip" title="为当前歌曲粘贴 LRC 歌词">✎ 编辑</button>
+        </div>
+        <div id="lyrics" class="lyrics"><p class="lyrics-empty">暂无歌词。点击「编辑」粘贴 LRC 文本，或添加链接时填写歌词地址。</p></div>
+      </div>
+      <div id="queue-view" class="side-view hidden">
+        <div class="panel-head">
+          <h2>播放队列</h2>
+          <button id="btn-queue-clear" class="chip" title="清空队列">🗑</button>
+        </div>
+        <ul id="queue" class="queue"></ul>
+        <p id="queue-empty" class="empty-hint">队列为空。在左侧歌曲点 ⋮ 选择「加入队列」。</p>
+      </div>
     </section>
   </main>
 
@@ -122,6 +145,23 @@
     </div>
   </div>
 
+  <!-- EQ 弹窗 -->
+  <div id="eq-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>均衡器（仅本地歌曲生效）</h3>
+      <label>低频 <span id="eq-low-val" class="eq-val">0</span> dB</label>
+      <input id="eq-low" class="eq-slider" type="range" min="-12" max="12" value="0" step="1" />
+      <label>中频 <span id="eq-mid-val" class="eq-val">0</span> dB</label>
+      <input id="eq-mid" class="eq-slider" type="range" min="-12" max="12" value="0" step="1" />
+      <label>高频 <span id="eq-high-val" class="eq-val">0</span> dB</label>
+      <input id="eq-high" class="eq-slider" type="range" min="-12" max="12" value="0" step="1" />
+      <div class="modal-actions">
+        <button id="eq-reset" class="btn">重置</button>
+        <button id="eq-close" class="btn btn-primary">完成</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="js/storage.js"></script>
@@ -129,8 +169,10 @@
   <script src="js/lyrics.js"></script>
   <script src="js/visualizer.js"></script>
   <script src="js/id3.js"></script>
+  <script src="js/library.js"></script>
   <script src="js/player.js"></script>
   <script src="js/playlist.js"></script>
+  <script src="js/queue.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
