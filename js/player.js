@@ -19,6 +19,7 @@
   var shuffle = false;
 
   var urlCache = {};    // 本地歌 objectURL 缓存
+  var progress = {};    // 每首歌播放进度（trackId -> 秒），持久化
   var handlers = {};
 
   function on(name, fn) { (handlers[name] = handlers[name] || []).push(fn); }
@@ -50,6 +51,7 @@
 
   function bind(el) {
     el.addEventListener('timeupdate', function () {
+      if (el === active && playlist[index]) saveProgress(playlist[index], el.currentTime);
       emit('time', el.currentTime, el.duration || 0);
     });
     el.addEventListener('loadedmetadata', function () {
@@ -61,6 +63,36 @@
     el.addEventListener('error', function () {
       emit('error', active ? active.title : '');
     });
+  }
+
+  function loadProgress() {
+    try { return JSON.parse(localStorage.getItem('cm-progress') || '{}') || {}; }
+    catch (e) { return {}; }
+  }
+  var lastSave = 0;
+  function saveProgress(track, time) {
+    if (!track) return;
+    var now = Date.now();
+    if (now - lastSave < 1500) return; // 1.5s 节流，减少写入
+    lastSave = now;
+    progress[track.id] = time;
+    try { localStorage.setItem('cm-progress', JSON.stringify(progress)); } catch (e) {}
+  }
+  function applySavedProgress(track) {
+    var t = progress[track.id];
+    if (!t || t <= 3) return; // 跳过开头 3 秒，避免无意义续播
+    var seek = function () {
+      if (isFinite(active.duration) && t < active.duration - 2) {
+        try { active.currentTime = t; } catch (e) {}
+      }
+    };
+    if (active.readyState >= 1) seek();
+    else active.addEventListener('loadedmetadata', seek, { once: true });
+  }
+  function clearProgress(id) {
+    if (!id) return;
+    delete progress[id];
+    try { localStorage.setItem('cm-progress', JSON.stringify(progress)); } catch (e) {}
   }
 
   function handleEnded() {
@@ -99,6 +131,7 @@
     (isLocal ? audioRemote : audioLocal).pause();
     active.src = getUrl(track);
     active.load();
+    applySavedProgress(track);
     emit('track', track, i);
     emit('cover', track.cover || null);
     if (CM && CM.Visualizer) CM.Visualizer.setAnalyser(isLocal && analyser ? analyser : null);
@@ -126,6 +159,7 @@
   }
 
   function init() {
+    progress = loadProgress();
     bind(audioLocal); bind(audioRemote);
     audioLocal.volume = 0.8; audioRemote.volume = 0.8;
   }
@@ -149,6 +183,7 @@
     getIndex: function () { return index; },
     setIndex: function (i) { index = i; },
     getTrack: function () { return playlist[index]; },
-    revokeUrl: revokeUrl
+    revokeUrl: revokeUrl,
+    clearProgress: clearProgress
   };
 })(window);

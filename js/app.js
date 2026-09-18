@@ -25,6 +25,7 @@
     var h = 0; for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
     return palette[Math.abs(h) % palette.length];
   }
+  function isImgCover(c) { return c && (c.indexOf('data:') === 0 || c.indexOf('http') === 0); }
 
   function $(id) { return document.getElementById(id); }
   function toast(msg) {
@@ -97,6 +98,7 @@
       state.remote = state.remote.filter(function (r) { return r.id !== id; });
       saveRemote();
     }
+    CM.Player.clearProgress(id);
     state.master.splice(i, 1);
     var cur = CM.Player.getIndex();
     if (cur === i) {
@@ -221,7 +223,14 @@
       $('track-title').textContent = track.title || '未知标题';
       $('track-artist').textContent = track.artist || '未知歌手';
       var cover = $('cover');
-      cover.style.background = track.cover || pickCover(track.id);
+      if (isImgCover(track.cover)) {
+        cover.style.background = '';
+        cover.style.backgroundImage = 'url("' + track.cover + '")';
+        cover.style.backgroundSize = 'cover';
+      } else {
+        cover.style.backgroundImage = '';
+        cover.style.background = track.cover || pickCover(track.id);
+      }
       CM.Playlist.setCurrent(CM.Player.getIndex());
       showLyricsFor(track);
       $('btn-play').textContent = '⏸';
@@ -300,7 +309,14 @@
           title: name, artist: '本地', file: f,
           cover: pickCover(name), source: 'local', addedAt: Date.now()
         };
-        appendLocal(rec);
+        if (CM.ID3) {
+          CM.ID3.parseCover(f).then(function (url) {
+            if (url) rec.cover = url;
+            appendLocal(rec);
+          }).catch(function () { appendLocal(rec); });
+        } else {
+          appendLocal(rec);
+        }
       });
       e.target.value = '';
       if (files.length) toast('已添加 ' + files.length + ' 首本地歌曲');

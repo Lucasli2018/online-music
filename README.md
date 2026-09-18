@@ -16,6 +16,9 @@
 - **播放列表管理**：点击播放、拖拽排序、删除、随机播放、单曲 / 列表循环
 - **歌词**：LRC 解析 + 同步滚动高亮，可手动粘贴编辑歌词
 - **深色模式**：珊瑚橙主题，偏好记忆在 localStorage
+- **进度续播**：记住每首歌的播放进度，下次打开自动续播
+- **真实封面**：自动解析音频内嵌的 ID3 封面图
+- **移动端拖拽**：手机上长按列表左侧手柄即可排序歌单
 - **快捷键**：`空格` 播放/暂停，`←` `→` 上一首/下一首
 
 ---
@@ -33,8 +36,11 @@ music-player/
 │   ├── lyrics.js        # LRC 解析与同步定位
 │   ├── visualizer.js    # Canvas 频谱可视化
 │   ├── player.js        # 双 audio 播放引擎 + Web Audio
-│   ├── playlist.js      # 歌单渲染 + 拖拽排序 + 删除
+│   ├── playlist.js      # 歌单渲染 + 拖拽排序（Pointer Events）+ 删除
+│   ├── id3.js           # 零依赖解析音频内嵌封面（ID3v2 APIC）
 │   └── app.js           # 总控（存储 / 播放 / 歌词 / 主题 / 快捷键）
+├── scripts/
+│   └── check.js         # 部署前语法校验（node --check 遍历 js/）
 └── wrangler.toml        # Cloudflare Pages 部署配置
 ```
 
@@ -64,7 +70,7 @@ npx serve music-player
 2. 连接 Git 仓库 `li-luoqiang/music-player`
 3. 构建配置：
    - **Framework preset**：`None`
-   - **Build command**：留空
+   - **Build command**：`node scripts/check.js`（部署前语法校验，失败则阻断部署；纯静态无构建步骤）
    - **Build output directory**：`.`
 4. 保存并部署，稍等片刻即可得到 `*.pages.dev` 地址
 
@@ -88,6 +94,7 @@ wrangler pages deploy .
 | 载入示例曲 | 点「🎵 示例曲」 |
 | 添加远程歌曲 | 点「🔗 添加链接」，填直链（可附 LRC 歌词地址） |
 | 编辑歌词 | 选中一首歌后，点歌词面板「✎ 编辑」粘贴 LRC 文本 |
+| 排序歌单 | 桌面直接拖拽；手机长按列表左侧 `⠿` 手柄拖动 |
 | 切换深浅色 | 点右上角 🌙 / ☀️ |
 
 ---
