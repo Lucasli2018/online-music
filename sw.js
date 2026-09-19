@@ -2,7 +2,7 @@
  * 离线策略：缓存应用壳（HTML/CSS/JS/图标/manifest），离线可开、可安装。
  * 不缓存音频：本地歌走 IndexedDB（不经过网络），远程歌跨域不缓存。
  */
-const CACHE = 'coral-music-v1';
+const CACHE = 'coral-music-v2';
 const SHELL = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const SHELL = [
   './js/storage.js',
   './js/samples.js',
   './js/lyrics.js',
+  './js/online.js',
   './js/visualizer.js',
   './js/id3.js',
   './js/library.js',

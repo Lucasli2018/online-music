@@ -35,7 +35,7 @@
 
       var badge = document.createElement('div');
       badge.className = 'track-badge';
-      var icon = track.source === 'local' ? '💾' : (track.source === 'sample' ? '🎵' : '🔗');
+      var icon = track.source === 'local' ? '💾' : (track.source === 'sample' ? '🎵' : (track.source === 'online' ? '🌐' : '🔗'));
       if (isImg(track.cover)) {
         badge.style.background = '';
         badge.style.backgroundImage = 'url("' + track.cover + '")';

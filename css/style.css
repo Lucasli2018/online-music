@@ -467,3 +467,37 @@ body {
 .desktop-lyrics .w:not(.sung) { color: rgba(255, 255, 255, 0.55); }
 .desktop-lyrics .w.sung { color: #fff; }
 .desktop-lyrics .dl-sub { display: block; font-size: 12px; font-weight: 400; opacity: 0.85; margin-top: 2px; }
+
+/* ---------- 在线音乐（Audius） ---------- */
+.modal-card.online-card { max-width: 560px; }
+.online-search-row { display: flex; gap: 8px; margin: 10px 0; }
+.online-search-row input {
+  flex: 1; padding: 9px 12px; border: 1px solid var(--border, #e3d9cf);
+  border-radius: 10px; background: var(--bg-secondary, #fff); color: var(--text-primary, #333);
+  font-size: 14px;
+}
+.online-status { font-size: 12px; color: var(--text-secondary, #8a8178); margin: 4px 0 8px; min-height: 16px; }
+.online-results { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.online-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px;
+  border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+  transition: background 0.16s, border 0.16s;
+}
+.online-item:hover { background: var(--bg-sunken); border-color: var(--border, #e3d9cf); }
+.online-cover {
+  width: 42px; height: 42px; border-radius: 8px; flex: 0 0 42px;
+  background-size: cover; background-position: center;
+  display: flex; align-items: center; justify-content: center;
+  background-color: var(--bg-sunken); font-size: 18px;
+}
+.online-meta { flex: 1; min-width: 0; }
+.online-title {
+  font-size: 14px; font-weight: 600; color: var(--text-primary, #333);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.online-artist {
+  font-size: 12px; color: var(--text-secondary, #8a8178);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.online-add { flex: 0 0 auto; }
+.online-empty { font-size: 13px; color: var(--text-secondary, #8a8178); padding: 12px 4px; }

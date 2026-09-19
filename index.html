@@ -31,6 +31,7 @@
     <div class="topbar-actions">
       <button id="btn-upload" class="btn btn-primary" title="从电脑上传音乐（持久化到浏览器）">＋ 上传音乐</button>
       <button id="btn-add-url" class="btn" title="通过链接添加远程歌曲">🔗 添加链接</button>
+      <button id="btn-online" class="btn" title="搜索并播放在线音乐（Audius，免 key，需联网）">🌐 在线音乐</button>
       <button id="btn-load-samples" class="btn" title="载入内置示例曲">🎵 示例曲</button>
       <button id="btn-export" class="btn" title="导出歌单/远程歌曲/歌词为 JSON 备份">⤓ 备份</button>
       <button id="btn-import" class="btn" title="从 JSON 备份恢复歌单">⤒ 恢复</button>
@@ -147,6 +148,22 @@
     </div>
   </div>
 
+  <!-- 在线音乐弹窗（Audius） -->
+  <div id="online-modal" class="modal hidden">
+    <div class="modal-card online-card">
+      <h3>🌐 在线音乐 · Audius</h3>
+      <div class="online-search-row">
+        <input id="online-query" type="text" placeholder="输入歌名 / 艺术家 / 关键词，回车搜索" />
+        <button id="online-search" class="btn btn-primary">搜索</button>
+      </div>
+      <p id="online-status" class="online-status"></p>
+      <div id="online-results" class="online-results"></div>
+      <div class="modal-actions">
+        <button id="online-close" class="btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 歌词编辑弹窗 -->
   <div id="lrc-modal" class="modal hidden">
     <div class="modal-card">
@@ -219,6 +236,7 @@
   <script src="js/storage.js"></script>
   <script src="js/samples.js"></script>
   <script src="js/lyrics.js"></script>
+  <script src="js/online.js"></script>
   <script src="js/visualizer.js"></script>
   <script src="js/id3.js"></script>
   <script src="js/library.js"></script>

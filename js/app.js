@@ -75,7 +75,7 @@
     Lib.addTrack(Object.assign({}, s, { cover: s.cover || pickCover(s.id) }));
   }
   function persistRemote() {
-    Lib.saveRemote(Lib.allTracks().filter(function (t) { return t.source === 'remote'; }));
+    Lib.saveRemote(Lib.allTracks().filter(function (t) { return t.source === 'remote' || t.source === 'online'; }));
   }
   function buildLibrary() {
     return CM.Storage.getAll().then(onLocalLoaded, function () { onLocalLoaded([]); });
@@ -210,7 +210,7 @@
       CM.Player.revokeUrl(track.id);
     }
     Lib.removeTrack(track.id);
-    if (track.source === 'remote') persistRemote();
+    if (track.source === 'remote' || track.source === 'online') persistRemote();
     CM.Player.clearProgress(track.id);
 
     var cur = CM.Player.getTrack();
@@ -541,6 +541,87 @@
     } else finish();
   }
 
+  /* ---------- 在线音乐（Audius 免费音乐 API） ---------- */
+  function openOnlineModal() {
+    $('online-modal').classList.remove('hidden');
+    setTimeout(function () { var q = $('online-query'); if (q) q.focus(); }, 0);
+  }
+  function closeOnlineModal() {
+    $('online-modal').classList.add('hidden');
+    $('online-results').innerHTML = '';
+    $('online-status').textContent = '';
+  }
+  function renderOnlineResults(items) {
+    var box = $('online-results');
+    box.innerHTML = '';
+    if (!items.length) {
+      var p = document.createElement('p');
+      p.className = 'online-empty';
+      p.textContent = '没有找到可播放的曲目，换个关键词试试～';
+      box.appendChild(p);
+      return;
+    }
+    items.forEach(function (it) {
+      var row = document.createElement('div');
+      row.className = 'online-item';
+      var cover = document.createElement('div');
+      cover.className = 'online-cover';
+      if (it.cover) cover.style.backgroundImage = 'url("' + it.cover + '")';
+      else cover.textContent = '🌐';
+      row.appendChild(cover);
+      var meta = document.createElement('div');
+      meta.className = 'online-meta';
+      var tt = document.createElement('div'); tt.className = 'online-title'; tt.textContent = it.title;
+      var ar = document.createElement('div'); ar.className = 'online-artist';
+      ar.textContent = it.artist + (it.duration ? ' · ' + fmt(it.duration) : '') + (it.genre ? ' · ' + it.genre : '');
+      meta.appendChild(tt); meta.appendChild(ar);
+      row.appendChild(meta);
+      var add = document.createElement('button');
+      add.className = 'chip online-add';
+      add.textContent = '＋ 加入';
+      add.addEventListener('click', function (e) { e.stopPropagation(); addOnlineTrack(it, false); });
+      row.appendChild(add);
+      row.addEventListener('click', function () { addOnlineTrack(it, true); });
+      box.appendChild(row);
+    });
+  }
+  function searchOnline() {
+    var q = $('online-query').value.trim();
+    if (!q) { toast('请输入歌名 / 艺术家 / 关键词'); return; }
+    var st = $('online-status');
+    st.textContent = '搜索中…';
+    $('online-results').innerHTML = '';
+    CM.Online.search(q).then(function (items) {
+      renderOnlineResults(items);
+      st.textContent = items.length ? ('找到 ' + items.length + ' 首可播放曲目 · 来自 Audius') : '没有结果';
+    }).catch(function (e) {
+      st.textContent = '搜索失败：' + (e && e.message ? e.message : '网络受限') + '（Audius 为境外服务，需联网）';
+    });
+  }
+  function addOnlineTrack(item, play) {
+    var rec = CM.Online.toRecord(item);
+    if (!Lib.get(rec.id)) { addRemoteRecord(rec); persistRemote(); }
+    renderLibrary(); renderTabs();
+    toast((play ? '正在播放：' : '已加入曲库：') + rec.title);
+    if (play) {
+      var all = Lib.resolve(Lib.listIds('all'));
+      CM.Player.setPlaylist(all);
+      var i = -1;
+      for (var k = 0; k < all.length; k++) { if (all[k].id === rec.id) { i = k; break; } }
+      if (i >= 0) CM.Player.loadIndex(i, true);
+      renderQueue();
+    }
+    // 静默尝试在线匹配歌词（歌名 / 艺术家 → LRCLIB）
+    if (!state.lyrics[rec.id]) {
+      CM.Lyrics.fetchLyrics({ title: rec.title, artist: rec.artist, duration: rec.duration })
+        .then(function (lrc) {
+          if (!lrc || state.lyrics[rec.id]) return;
+          state.lyrics[rec.id] = lrc; saveLyrics(); rec.lrc = lrc;
+          if (state.currentTrackId === rec.id) showLyricsFor(rec);
+        }).catch(function () {});
+    }
+  }
+
   /* ---------- 歌单导出 / 导入（JSON 备份） ---------- */
   function exportData() {
     var data = {
@@ -777,6 +858,15 @@
     $('url-cancel').addEventListener('click', closeUrlModal);
     $('url-ok').addEventListener('click', submitUrl);
     $('url-modal').addEventListener('click', function (e) { if (e.target === this) closeUrlModal(); });
+
+    // 在线音乐（Audius 免费音乐 API）
+    $('btn-online').addEventListener('click', openOnlineModal);
+    $('online-close').addEventListener('click', closeOnlineModal);
+    $('online-search').addEventListener('click', searchOnline);
+    $('online-query').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); searchOnline(); }
+    });
+    $('online-modal').addEventListener('click', function (e) { if (e.target === this) closeOnlineModal(); });
 
     $('btn-load-samples').addEventListener('click', function () {
       var have = {};

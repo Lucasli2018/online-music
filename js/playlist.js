@@ -29,7 +29,7 @@
 
       var badge = document.createElement('div');
       badge.className = 'track-badge';
-      var icon = track.source === 'local' ? '💾' : (track.source === 'sample' ? '🎵' : '🔗');
+      var icon = track.source === 'local' ? '💾' : (track.source === 'sample' ? '🎵' : (track.source === 'online' ? '🌐' : '🔗'));
       if (isImg(track.cover)) {
         badge.style.background = '';
         badge.style.backgroundImage = 'url("' + track.cover + '")';
@@ -49,7 +49,7 @@
       var s = document.createElement('div');
       s.className = 'track-sub';
       s.textContent = (track.artist || '未知歌手') +
-        (track.source === 'local' ? ' · 本地' : (track.source === 'sample' ? ' · 示例' : ' · 链接'));
+        (track.source === 'local' ? ' · 本地' : (track.source === 'sample' ? ' · 示例' : (track.source === 'online' ? ' · 在线' : ' · 链接')));
       info.appendChild(t); info.appendChild(s);
 
       var favOn = global.CM && global.CM.Library && global.CM.Library.isFav(track.id);
