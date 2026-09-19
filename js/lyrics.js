@@ -172,12 +172,42 @@
       .catch(function () { return false; });
   }
 
+  // 纯文本歌词兜底（lyrics.ovh：免 key、CORS 友好，但无时间轴）
+  function fetchPlainLyrics(opts) {
+    opts = opts || {};
+    var title = (opts.title || '').trim();
+    var artist = (opts.artist || '').trim();
+    if (!title) return Promise.reject(new Error('缺少歌名'));
+    var u = 'https://api.lyrics.ovh/v1/' + encodeURIComponent(artist || 'unknown') + '/' + encodeURIComponent(title);
+    return fetch(u).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (j) {
+      if (!j || !j.lyrics) throw new Error('无歌词');
+      return String(j.lyrics).replace(/\r/g, '').trim();
+    });
+  }
+
+  // 纯文本 -> 估算时间轴的 LRC（每行 secondsPerLine 秒），仅用于让纯文本歌词可读、可滚动
+  function plainToLrc(text, secondsPerLine) {
+    var lines = String(text || '').split(/\n+/).map(function (s) { return s.trim(); })
+      .filter(function (s) { return s && s.charAt(0) !== '['; });
+    var step = secondsPerLine || 4;
+    return lines.map(function (t, i) {
+      var s = i * step;
+      var m = Math.floor(s / 60), ss = s % 60;
+      return '[' + (m < 10 ? '0' : '') + m + ':' + (ss < 10 ? '0' : '') + ss + '.00]' + t;
+    }).join('\n');
+  }
+
   global.CM = global.CM || {};
   global.CM.Lyrics = {
     parse: parse,
     activeIndex: activeIndex,
     decode: decode,
     fetchLyrics: fetchLyrics,
+    fetchPlainLyrics: fetchPlainLyrics,
+    plainToLrc: plainToLrc,
     probe: probe,
     API_BASE: API_BASE
   };

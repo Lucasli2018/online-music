@@ -531,3 +531,19 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .audius-account .chip { flex: 0 0 auto; }
+
+/* 音源切换与配置 */
+.online-sources { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
+.source-tab { font-size: 12px; }
+.source-tab.active { background: var(--accent, #ff7a45); color: #fff; border-color: var(--accent, #ff7a45); }
+.online-source-config { margin: 0 0 8px; }
+.online-source-config.hidden { display: none; }
+.online-cfg-label { display: block; font-size: 12px; color: var(--text-secondary, #8a8178); margin-bottom: 4px; }
+.online-source-config input {
+  width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e3d9cf);
+  border-radius: 10px; background: var(--bg-secondary, #fff); color: var(--text-primary, #333); font-size: 13px;
+}
+.online-preview {
+  font-size: 10px; padding: 1px 5px; border-radius: 6px;
+  background: rgba(255, 122, 69, 0.15); color: var(--accent-deep, #993c1d); font-weight: 700;
+}
