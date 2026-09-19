@@ -336,7 +336,12 @@
     if (!el) return;
     if (!state.deskLyricsOn) { el.classList.add('hidden'); el._idx = -1; return; }
     var line = state.currentLines[idx];
-    if (!line) { el.classList.add('hidden'); el._idx = -1; return; }
+    if (!line) {
+      // 无歌词 / 未播放时也保留提示条，让「开启桌面歌词」有可见反馈
+      if (el._idx !== -1) { el.innerHTML = '<span class="dl-main">♪ 桌面歌词已开启</span>'; el._words = []; el._idx = -1; }
+      el.classList.remove('hidden');
+      return;
+    }
     var t = (CM.Player.getCurrentTime ? CM.Player.getCurrentTime() : 0) + state.lyricOffset / 1000;
     if (el._idx !== idx) {
       el.classList.remove('hidden');
@@ -859,14 +864,13 @@
     $('url-ok').addEventListener('click', submitUrl);
     $('url-modal').addEventListener('click', function (e) { if (e.target === this) closeUrlModal(); });
 
-    // 在线音乐（Audius 免费音乐 API）
-    $('btn-online').addEventListener('click', openOnlineModal);
-    $('online-close').addEventListener('click', closeOnlineModal);
-    $('online-search').addEventListener('click', searchOnline);
-    $('online-query').addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); searchOnline(); }
-    });
-    $('online-modal').addEventListener('click', function (e) { if (e.target === this) closeOnlineModal(); });
+    // 在线音乐（Audius 免费音乐 API）—— 元素缺失时跳过，避免中断后续所有绑定
+    function bindEl(id, ev, fn) { var el = $(id); if (el) el.addEventListener(ev, fn); }
+    bindEl('btn-online', 'click', openOnlineModal);
+    bindEl('online-close', 'click', closeOnlineModal);
+    bindEl('online-search', 'click', searchOnline);
+    bindEl('online-query', 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchOnline(); } });
+    bindEl('online-modal', 'click', function (e) { if (e.target === this) closeOnlineModal(); });
 
     $('btn-load-samples').addEventListener('click', function () {
       var have = {};
@@ -1006,9 +1010,19 @@
     })();
 
     // PWA：注册 Service Worker（离线可开 / 可安装到桌面）
+    // 新 SW 接管后自动刷新一次，避免「HTML 已更新、JS 仍是 SW 缓存的旧版」造成新按钮无绑定
     if ('serviceWorker' in navigator) {
+      var hadController = !!navigator.serviceWorker.controller;
+      var reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!hadController || reloading) return;
+        reloading = true;
+        global.location.reload();
+      });
       global.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').catch(function () { /* 非 https/localhost 环境忽略 */ });
+        navigator.serviceWorker.register('sw.js').then(function (reg) {
+          if (reg.update) reg.update();
+        }).catch(function () { /* 非 https/localhost 环境忽略 */ });
       });
     }
   }
