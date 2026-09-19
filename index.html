@@ -156,6 +156,11 @@
         <input id="online-query" type="text" placeholder="输入歌名 / 艺术家 / 关键词，回车搜索" />
         <button id="online-search" class="btn btn-primary">搜索</button>
       </div>
+      <details class="online-key">
+        <summary>⚙ Audius API Key（可选）</summary>
+        <input id="online-apikey" type="text" placeholder="粘贴 API Key 可提升速率配额" />
+        <p class="online-key-hint">只需 API Key（官方允许放在前端）。<b>Bearer Token 是后端专用凭据</b>，填进网页等于公开泄露，本页不接受也不保存它。</p>
+      </details>
       <p id="online-status" class="online-status"></p>
       <div id="online-results" class="online-results"></div>
       <div class="modal-actions">

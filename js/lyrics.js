@@ -156,12 +156,29 @@
     });
   }
 
+  // 只探测 LRCLIB 是否有这首曲目的歌词（不取正文），用于结果列表标注。
+  // 返回 Promise<boolean>，任何异常一律视为「无」。
+  function probe(opts) {
+    opts = opts || {};
+    var title = (opts.title || '').trim();
+    var artist = (opts.artist || '').trim();
+    if (!title) return Promise.resolve(false);
+    var u = API_BASE + '?track_name=' + encodeURIComponent(title) +
+            '&artist_name=' + encodeURIComponent(artist || 'unknown');
+    if (opts.album) u += '&album_name=' + encodeURIComponent(opts.album);
+    if (opts.duration) u += '&duration=' + Math.round(opts.duration);
+    return fetch(u, { headers: { 'Lrclib-Client': 'CoralMusic/1.0' } })
+      .then(function (r) { return !!r.ok; })
+      .catch(function () { return false; });
+  }
+
   global.CM = global.CM || {};
   global.CM.Lyrics = {
     parse: parse,
     activeIndex: activeIndex,
     decode: decode,
     fetchLyrics: fetchLyrics,
+    probe: probe,
     API_BASE: API_BASE
   };
 })(window);

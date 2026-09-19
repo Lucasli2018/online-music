@@ -549,6 +549,8 @@
   /* ---------- 在线音乐（Audius 免费音乐 API） ---------- */
   function openOnlineModal() {
     $('online-modal').classList.remove('hidden');
+    var ak = $('online-apikey');
+    if (ak && !ak.value) ak.value = (CM.Online.getApiKey ? CM.Online.getApiKey() : '') || '';
     setTimeout(function () { var q = $('online-query'); if (q) q.focus(); }, 0);
   }
   function closeOnlineModal() {
@@ -569,6 +571,7 @@
     items.forEach(function (it) {
       var row = document.createElement('div');
       row.className = 'online-item';
+      row.setAttribute('data-aid', it.aid);
       var cover = document.createElement('div');
       cover.className = 'online-cover';
       if (it.cover) cover.style.backgroundImage = 'url("' + it.cover + '")';
@@ -579,6 +582,12 @@
       var tt = document.createElement('div'); tt.className = 'online-title'; tt.textContent = it.title;
       var ar = document.createElement('div'); ar.className = 'online-artist';
       ar.textContent = it.artist + (it.duration ? ' · ' + fmt(it.duration) : '') + (it.genre ? ' · ' + it.genre : '');
+      var ly = document.createElement('span');
+      ly.className = 'online-lyric';
+      ly.dataset.state = 'probing';
+      ly.textContent = '♪ 检测歌词…';
+      ar.appendChild(document.createTextNode(' '));
+      ar.appendChild(ly);
       meta.appendChild(tt); meta.appendChild(ar);
       row.appendChild(meta);
       var add = document.createElement('button');
@@ -590,6 +599,24 @@
       box.appendChild(row);
     });
   }
+  // 逐条（限流）探测 LRCLIB 是否有歌词，更新结果行标记
+  function probeLyricsForResults(items) {
+    var i = 0;
+    function step() {
+      if (i >= items.length) return;
+      var it = items[i++];
+      var el = document.querySelector('.online-item[data-aid="' + it.aid + '"] .online-lyric');
+      if (!el) return step(); // 结果已被替换
+      CM.Lyrics.probe({ title: it.title, artist: it.artist, duration: it.duration })
+        .then(function (ok) {
+          el.dataset.state = ok ? 'yes' : 'no';
+          el.textContent = ok ? '♪ 有歌词' : '— 无歌词';
+        })
+        .catch(function () { el.dataset.state = 'no'; el.textContent = '— 无歌词'; })
+        .then(function () { setTimeout(step, 320); }); // LRCLIB 建议顺序 + 间隔
+    }
+    step();
+  }
   function searchOnline() {
     var q = $('online-query').value.trim();
     if (!q) { toast('请输入歌名 / 艺术家 / 关键词'); return; }
@@ -599,6 +626,7 @@
     CM.Online.search(q).then(function (items) {
       renderOnlineResults(items);
       st.textContent = items.length ? ('找到 ' + items.length + ' 首可播放曲目 · 来自 Audius') : '没有结果';
+      probeLyricsForResults(items);
     }).catch(function (e) {
       st.textContent = '搜索失败：' + (e && e.message ? e.message : '网络受限') + '（Audius 为境外服务，需联网）';
     });
@@ -871,6 +899,11 @@
     bindEl('online-search', 'click', searchOnline);
     bindEl('online-query', 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchOnline(); } });
     bindEl('online-modal', 'click', function (e) { if (e.target === this) closeOnlineModal(); });
+    // Audius API Key（仅存前端，官方允许）—— 变更即保存，用于提升速率配额
+    bindEl('online-apikey', 'change', function () {
+      CM.Online.setApiKey(this.value);
+      toast(this.value.trim() ? '已保存 Audius API Key（提升速率配额）' : '已清除 Audius API Key');
+    });
 
     $('btn-load-samples').addEventListener('click', function () {
       var have = {};

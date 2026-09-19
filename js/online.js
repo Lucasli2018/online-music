@@ -11,6 +11,17 @@
   var BASE = 'https://api.audius.co/v1';
   var APP = 'CoralMusic';   // Audius 要求标识调用方（无需注册，仅用于统计）
   var PAGE = 20;
+  var LS_KEY = 'cm-audius-apikey'; // 只存 API Key（官方允许放前端）；Bearer Token 属后端专用，绝不存前端
+
+  function getApiKey() { try { return localStorage.getItem(LS_KEY) || ''; } catch (e) { return ''; } }
+  function setApiKey(k) {
+    try { (k && k.trim()) ? localStorage.setItem(LS_KEY, k.trim()) : localStorage.removeItem(LS_KEY); } catch (e) {}
+  }
+  // 鉴权参数：app_name 必带；填了 API Key 就一并带上（提升速率配额）
+  function authQS() {
+    var k = getApiKey();
+    return '&app_name=' + APP + (k ? ('&api_key=' + encodeURIComponent(k)) : '');
+  }
 
   function streamUrl(id) {
     return BASE + '/tracks/' + encodeURIComponent(id) + '/stream?app_name=' + APP;
@@ -33,7 +44,7 @@
     var q = (query || '').trim();
     if (!q) return Promise.resolve([]);
     var u = BASE + '/tracks/search?query=' + encodeURIComponent(q) +
-            '&app_name=' + APP + '&limit=' + (limit || PAGE);
+            authQS() + '&limit=' + (limit || PAGE);
     return fetch(u).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -62,5 +73,9 @@
   }
 
   global.CM = global.CM || {};
-  global.CM.Online = { search: search, streamUrl: streamUrl, toRecord: toRecord, base: BASE, app: APP };
+  global.CM.Online = {
+    search: search, streamUrl: streamUrl, toRecord: toRecord,
+    getApiKey: getApiKey, setApiKey: setApiKey,
+    base: BASE, app: APP
+  };
 })(window);

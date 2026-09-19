@@ -503,3 +503,20 @@ body {
 }
 .online-add { flex: 0 0 auto; }
 .online-empty { font-size: 13px; color: var(--text-secondary, #8a8178); padding: 12px 4px; }
+
+/* Audius API Key（可选，仅存前端） */
+.online-key { margin: 2px 0 8px; font-size: 12px; }
+.online-key summary { cursor: pointer; color: var(--text-secondary, #8a8178); }
+.online-key input {
+  width: 100%; margin-top: 6px; padding: 8px 12px;
+  border: 1px solid var(--border, #e3d9cf); border-radius: 10px;
+  background: var(--bg-secondary, #fff); color: var(--text-primary, #333); font-size: 13px;
+}
+.online-key-hint { margin: 6px 0 0; font-size: 11px; line-height: 1.5; color: var(--text-secondary, #8a8178); }
+.online-key-hint b { color: var(--accent-deep, #993c1d); }
+
+/* 结果行的歌词可用性标注 */
+.online-lyric { font-size: 11px; color: var(--text-secondary, #8a8178); }
+.online-lyric[data-state="yes"] { color: var(--accent-deep, #993c1d); font-weight: 700; }
+.online-lyric[data-state="probing"] { opacity: 0.6; }
+.online-lyric[data-state="no"] { opacity: 0.55; }
