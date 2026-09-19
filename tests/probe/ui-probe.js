@@ -135,6 +135,18 @@ function check(name, ok, extra) {
     await send('Page.enable');
     await send('Runtime.enable');
 
+    // 自动应答原生弹窗（prompt / confirm）——无头浏览器会卡在对话框上
+    var pendingDialog = null;
+    function willAnswerDialog(text) { pendingDialog = text; }
+    ws.addEventListener('message', function (ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg.method !== 'Page.javascriptDialogOpening') return;
+      var reply = { accept: true };
+      if (pendingDialog !== null) { reply.promptText = String(pendingDialog); pendingDialog = null; }
+      send('Page.handleJavaScriptDialog', reply).catch(function () {});
+    });
+
     function evalJS(expression) {
       return send('Runtime.evaluate', { expression: expression, returnByValue: true, awaitPromise: true })
         .then(function (r) {
@@ -386,6 +398,134 @@ function check(name, ok, extra) {
       await clickSel('#btn-ab-clear');
       await sleep(120);
       check('清除后 AB 状态复位', await evalJS('window.CM.Player.getAb().a') === null);
+    }
+
+    /* ---------- 5E 曲库管理（排序 / 批量多选 / 去重 / 歌单重命名） ---------- */
+    check('左栏工具条渲染多选 / 排序 / 去重三项',
+      await evalJS('!!document.getElementById("btn-multi") && !!document.getElementById("sort-select") && !!document.getElementById("btn-dedupe")'));
+    var sortOpts = await evalJS('document.getElementById("sort-select").options.length');
+    check('排序下拉包含七种模式', sortOpts === 7, '实际 ' + sortOpts);
+
+    // 先切回「全部」歌单：前面的虚拟歌单只显示听过的曲目，排序与批量都需要完整列表
+    await clickSel('#list-tabs .list-tab');
+    var allCount = await waitFor('document.querySelectorAll("#playlist li.track").length >= 5');
+    check('切回「全部」歌单后曲目完整', allCount,
+      '曲目数=' + (await evalJS('document.querySelectorAll("#playlist li.track").length')));
+
+    // 排序：切到「歌名」后左栏顺序应与按标题排序一致
+    var titlesBefore = await evalJS('JSON.stringify(Array.from(document.querySelectorAll("#playlist .track-title")).map(function(e){return e.textContent;}))');
+    await evalJS('(function(){var s=document.getElementById("sort-select");s.value="title";s.dispatchEvent(new Event("change",{bubbles:true}));})()');
+    await sleep(200);
+    check('切到「歌名」排序后顺序符合标题升序',
+      await evalJS('(function(){var ts=Array.from(document.querySelectorAll("#playlist .track-title")).map(function(e){return e.textContent;});' +
+        'var exp=ts.slice().sort(function(a,b){return a.localeCompare(b,"zh-Hans-CN");});return JSON.stringify(ts)===JSON.stringify(exp);})()'),
+      titlesBefore);
+    // 排序偏好应落盘
+    check('排序偏好写入 localStorage', (await evalJS('localStorage.getItem("cm-sort")')) === 'title');
+    await evalJS('(function(){var s=document.getElementById("sort-select");s.value="default";s.dispatchEvent(new Event("change",{bubbles:true}));})()');
+    await sleep(150);
+
+    // 批量多选
+    await clickSel('#btn-multi');
+    await sleep(150);
+    check('进入多选态后批量工具条出现',
+      !(await evalJS('document.getElementById("batch-bar").classList.contains("hidden")')) &&
+      (await evalJS('document.querySelector(".lib-tools").classList.contains("hidden")')));
+    var pickCount = await evalJS('document.querySelectorAll("#playlist .track-pick").length');
+    var rowCount = await evalJS('document.querySelectorAll("#playlist li.track").length');
+    check('每行出现勾选框', pickCount === rowCount && pickCount > 0, pickCount + '/' + rowCount);
+
+    await clickSel('#playlist li.track:nth-child(1)');
+    await clickSel('#playlist li.track:nth-child(2)');
+    await sleep(150);
+    check('勾选两首后计数正确',
+      (await evalJS('document.getElementById("batch-count").textContent')) === '已选 2 首',
+      await evalJS('document.getElementById("batch-count").textContent'));
+    check('选中行有视觉标记',
+      (await evalJS('document.querySelectorAll("#playlist li.track.selected").length')) === 2 &&
+      (await evalJS('document.querySelectorAll("#playlist .track-pick.on").length')) === 2);
+    check('多选态下不显示单曲操作按钮',
+      (await evalJS('document.querySelectorAll("#playlist li.track.multi .track-del").length')) === 0);
+
+    var qBefore = await evalJS('window.CM.Player.getQueue().length');
+    await clickSel('#batch-queue');
+    await sleep(200);
+    var qAfter = await evalJS('window.CM.Player.getQueue().length');
+    check('批量加入队列后队列长度 +2', qAfter === qBefore + 2, qBefore + ' → ' + qAfter);
+    check('批量操作后自动退出多选态',
+      await evalJS('document.getElementById("batch-bar").classList.contains("hidden")'));
+
+    // 取消按钮
+    await clickSel('#btn-multi');
+    await sleep(120);
+    await clickSel('#playlist li.track:nth-child(1)');
+    await sleep(120);
+    await clickSel('#batch-cancel');
+    await sleep(150);
+    check('点「取消」退出多选并清空勾选',
+      await evalJS('document.getElementById("batch-bar").classList.contains("hidden")') === true &&
+      await evalJS('document.getElementById("batch-count").textContent') === '已选 0 首');
+
+    // 去重：先注入两条同标题同歌手的曲目，再触发重渲染
+    await evalJS('(function(){var L=window.CM.Library;' +
+      'L.addTrack({id:"dup-a",title:"重复曲",artist:"测试",source:"online",url:"https://x/a.mp3",duration:100,addedAt:1});' +
+      'L.addTrack({id:"dup-b",title:"重复曲",artist:"测试",source:"online",url:"https://x/b.mp3",addedAt:2});' +
+      '})()');
+    await clickSel('#list-tabs .list-tab');   // 点「全部」tab 触发左栏重渲染
+    await sleep(250);
+    await clickSel('#btn-dedupe');
+    check('去重弹窗打开', await waitFor('!document.getElementById("dedupe-modal").classList.contains("hidden")'));
+    var groups = await evalJS('document.querySelectorAll("#dedupe-list .dedupe-group").length');
+    check('检测出 1 组重复', groups === 1, '实际 ' + groups);
+    check('默认保留信息更完整的一条（有时长的）',
+      await evalJS('document.querySelector("#dedupe-list .dedupe-row.keep .dedupe-info").textContent.indexOf("1:40") >= 0'),
+      await evalJS('document.querySelector("#dedupe-list .dedupe-row.keep .dedupe-info").textContent'));
+    var totalBefore = await evalJS('document.querySelectorAll("#playlist li.track").length');
+    await clickSel('#dedupe-apply');
+    await sleep(350);
+    var totalAfter = await evalJS('document.querySelectorAll("#playlist li.track").length');
+    check('删除重复后曲库只剩一条', totalAfter === totalBefore - 1, totalBefore + ' → ' + totalAfter);
+    check('删除后重新扫描显示无重复',
+      /没有发现重复歌曲/.test(await evalJS('document.getElementById("dedupe-summary").textContent')));
+    await clickSel('#dedupe-close');
+    check('去重弹窗可关闭', await waitFor('document.getElementById("dedupe-modal").classList.contains("hidden")'));
+
+    // 歌单重命名（激活的歌单标签上的 ✎ → 内联输入 → 回车确认）
+    willAnswerDialog('探针歌单');
+    await clickSel('#btn-new-list');
+    var newTab = await waitFor('Array.from(document.querySelectorAll("#list-tabs .list-tab")).some(function(t){return t.textContent.indexOf("探针歌单")>=0;})');
+    check('新建歌单后标签出现', newTab);
+    check('仅激活的歌单标签带重命名入口',
+      await evalJS('document.querySelectorAll("#list-tabs .list-tab.active .tab-edit").length') === 1 &&
+      await evalJS('document.querySelectorAll("#list-tabs .list-tab .tab-edit").length') === 1);
+    // 标签溢出检查：活动标签必须落在标签栏可视区内，否则落在滚动区外点不到
+    check('活动歌单标签在标签栏可视区内',
+      await evalJS('(function(){var box=document.querySelector(".list-tabs").getBoundingClientRect();' +
+        'var t=document.querySelector("#list-tabs .list-tab.active").getBoundingClientRect();' +
+        'return t.left >= box.left - 0.5 && t.right <= box.right + 0.5;})()'));
+    await clickSel('#list-tabs .list-tab.active .tab-edit');
+    var renameOpen = await waitFor('!!document.querySelector("#list-tabs .tab-rename")');
+    check('点 ✎ 进入内联重命名', renameOpen);
+    if (renameOpen) {
+      await send('Input.insertText', { text: '重命名后' });
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 13, code: 'Enter', key: 'Enter' });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 13, code: 'Enter', key: 'Enter' });
+      await sleep(250);
+      check('回车确认后标签更名成功',
+        await evalJS('Array.from(document.querySelectorAll("#list-tabs .list-tab")).some(function(t){return t.textContent.indexOf("重命名后")>=0;})'),
+        await evalJS('Array.from(document.querySelectorAll("#list-tabs .list-tab")).map(function(t){return t.textContent;}).join("|")'));
+      check('重命名写回数据层',
+        await evalJS('Object.keys(window.CM.Library.getLists()).some(function(k){return window.CM.Library.getList(k).name==="重命名后";})'));
+      // 清理：删除该歌单
+      var del = await evalJS('(function(){var t=Array.from(document.querySelectorAll("#list-tabs .list-tab")).filter(function(x){return x.textContent.indexOf("重命名后")>=0;})[0];' +
+        'if(!t)return null;var d=t.querySelector(".tab-del");var r=d.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()');
+      if (del) {
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: del.x, y: del.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: del.x, y: del.y, button: 'left', clickCount: 1 });
+        await sleep(250);
+        check('删除测试歌单后标签消失',
+          !(await evalJS('Array.from(document.querySelectorAll("#list-tabs .list-tab")).some(function(t){return t.textContent.indexOf("重命名后")>=0;})')));
+      }
     }
 
     // 10. 无控制台错误

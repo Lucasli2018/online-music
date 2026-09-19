@@ -308,8 +308,13 @@ body {
 
 /* ---------- 歌单 tabs ---------- */
 .list-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.list-tabs { display: flex; gap: 6px; overflow-x: auto; flex: 1; padding-bottom: 2px; }
+/* min-width: 0 是关键：flex 项目默认 min-width:auto，会被内容撑开 ——
+ * 标签一多就溢出面板边界、被相邻面板盖住（看得见却点不到）。 */
+.list-tabs { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; padding-bottom: 2px; }
+.list-tabs::-webkit-scrollbar { height: 4px; }
+.list-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .list-tab {
+  flex: 0 0 auto;
   border: 1px solid var(--border);
   background: var(--bg-sunken);
   color: var(--text-dim);
@@ -790,3 +795,62 @@ body {
 .cloud-item-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cloud-item-sub { font-size: 12px; color: var(--text-dim); }
 .cloud-err { color: #e24b4a; }
+
+/* ---------- 5E 曲库工具条 / 批量多选 / 重复歌曲 ---------- */
+.lib-tools { display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; }
+.lib-tools .chip { flex: 0 0 auto; }
+.sort-select {
+  flex: 1; min-width: 0; padding: 5px 10px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-elev); color: var(--text); cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+}
+.sort-select:focus { outline: 2px solid var(--accent-soft); outline-offset: 1px; }
+.batch-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 8px 0 2px; padding: 6px 8px; border-radius: 12px;
+  background: var(--bg-sunken); border: 1px solid var(--border);
+}
+.batch-count { font-size: 12px; font-weight: 700; color: var(--accent-deep); margin-right: 2px; }
+.chip.btn-danger { color: #d4380d; border-color: #ffbb96; background: #fff6f2; }
+.chip.btn-danger:hover { color: #d4380d; border-color: #d4380d; }
+[data-theme="dark"] .chip.btn-danger { color: #ff9c7a; border-color: #6b3a2a; background: #2a1c16; }
+[data-theme="dark"] .chip.btn-danger:hover { color: #ffb59a; border-color: #a8552f; }
+
+/* 多选态 */
+.track-pick {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-elev);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; line-height: 1; color: #fff;
+}
+.track-pick.on { background: var(--accent); border-color: var(--accent); }
+.track.selected { background: rgba(255, 122, 69, 0.1); border-color: var(--accent-soft); }
+[data-theme="dark"] .track.selected { background: rgba(255, 140, 90, 0.14); }
+
+/* 歌单内联重命名 */
+.tab-rename {
+  width: 96px; padding: 2px 6px; font-size: 12px;
+  border: 1px solid var(--accent); border-radius: 8px;
+  background: var(--bg-elev); color: var(--text);
+}
+.tab-rename:focus { outline: none; }
+
+/* 重复歌曲弹窗 */
+.dedupe-list { max-height: 52vh; overflow-y: auto; margin-top: 8px; }
+.dedupe-group {
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 8px 10px; margin-bottom: 8px; background: var(--bg-elev);
+}
+.dedupe-head { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.dedupe-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px; border-radius: 8px; cursor: pointer; font-size: 12px;
+  color: var(--text-dim);
+}
+.dedupe-row:hover { background: var(--bg-sunken); }
+.dedupe-row.keep { background: rgba(255, 122, 69, 0.12); color: var(--text); }
+.dedupe-row input[type=radio] { accent-color: var(--accent); margin: 0; flex: 0 0 auto; }
+.dedupe-info { flex: 1; min-width: 0; }
+.tab-edit { margin-left: 4px; font-size: 11px; opacity: 0.65; }
+.tab-edit:hover { opacity: 1; color: var(--accent-deep); }

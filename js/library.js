@@ -98,6 +98,96 @@
     try { localStorage.setItem(LS_REMOTE, JSON.stringify(arr)); } catch (e) {}
   }
 
+  /* ---------- 排序（5E）----------
+   * mode = default 时保持歌单自身的 id 顺序（不排序），保证既有行为零变更。
+   */
+  var SORT_MODES = {
+    default: '默认顺序',
+    added: '添加时间',
+    title: '歌名',
+    artist: '歌手',
+    duration: '时长',
+    plays: '播放次数',
+    recent: '最近播放'
+  };
+
+  function cmpText(a, b) {
+    return String(a || '').localeCompare(String(b || ''), 'zh-Hans-CN');
+  }
+
+  function sortTracks(tracks, mode, stats) {
+    var list = (tracks || []).slice();
+    if (!mode || mode === 'default' || !SORT_MODES[mode]) return list;
+    stats = stats || {};
+    var st = function (t) { return stats[t.id] || {}; };
+    if (mode === 'title') {
+      list.sort(function (a, b) { return cmpText(a.title, b.title); });
+    } else if (mode === 'artist') {
+      list.sort(function (a, b) {
+        return cmpText(a.artist, b.artist) || cmpText(a.title, b.title);
+      });
+    } else if (mode === 'duration') {
+      list.sort(function (a, b) { return (b.duration || 0) - (a.duration || 0); });
+    } else if (mode === 'plays') {
+      list.sort(function (a, b) {
+        return (st(b).c || 0) - (st(a).c || 0) || (st(b).at || 0) - (st(a).at || 0);
+      });
+    } else if (mode === 'recent') {
+      list.sort(function (a, b) { return (st(b).at || 0) - (st(a).at || 0); });
+    } else if (mode === 'added') {
+      list.sort(function (a, b) { return (a.addedAt || 0) - (b.addedAt || 0); });
+    }
+    return list;
+  }
+
+  /* ---------- 重复歌曲检测（5E）----------
+   * 指纹只用「标题 + 歌手」的规范化文本，不含时长 —— 同一首歌来自不同音源时
+   * 时长常差几秒（试听版 / 完整版），带上时长反而会漏判。
+   * 代价是「同名不同版本」可能被归为一组，因此去重页面必须让用户逐组确认。
+   */
+  function normalizeText(s) {
+    return String(s || '').toLowerCase()
+      .replace(/\.(mp3|m4a|wav|flac|ogg|oga|aac|opus|weba?|ape|wma)$/, '')
+      // 先连括号内容一起去掉：文件名里的 (Live) / (Remastered) / 【无损】 多是版本噪声
+      .replace(/[（(\[【<《][^）)\]】>》]*[）)\]】>》]/g, '')
+      // 再去掉残留的标点与空白，得到纯文本指纹
+      .replace(/[\s\-_·、，,。.!！?？'"“”‘’()（）\[\]【】<>《》|/\\]+/g, '')
+      .trim();
+  }
+  function dupKey(t) {
+    return normalizeText(t && t.title) + '|' + normalizeText(t && t.artist);
+  }
+  // 信息完整度：有时长 / 真实封面 / 内嵌歌词 / 云端持久 的更值得保留
+  function trackScore(t) {
+    var s = 0;
+    if (t.duration > 0) s += 2;
+    if (t.cover && (t.cover.indexOf('http') === 0 || t.cover.indexOf('data:') === 0)) s += 1;
+    if (t.lrc) s += 1;
+    if (t.source === 'cloud' || t.source === 'local') s += 1;
+    return s;
+  }
+  function findDuplicates(tracks) {
+    var map = {};
+    (tracks || []).forEach(function (t) {
+      if (!t || !t.id) return;
+      var k = dupKey(t);
+      if (!k || k === '|') return;   // 标题与歌手都为空，无法判定重
+      (map[k] = map[k] || []).push(t);
+    });
+    var groups = [];
+    Object.keys(map).forEach(function (k) {
+      if (map[k].length > 1) {
+        map[k].sort(function (a, b) {
+          return trackScore(b) - trackScore(a) || (b.addedAt || 0) - (a.addedAt || 0);
+        });
+        groups.push(map[k]);
+      }
+    });
+    // 条目多的组排在前面，用户先看到「重得最厉害」的
+    groups.sort(function (a, b) { return b.length - a.length; });
+    return groups;
+  }
+
   global.CM = global.CM || {};
   global.CM.Library = {
     tracks: tracks,
@@ -106,6 +196,8 @@
     addList: addList, renameList: renameList, removeList: removeList, listIds: listIds,
     addToList: addToList, removeFromList: removeFromList, isFav: isFav, toggleFav: toggleFav,
     loadRemote: loadRemote, saveRemote: saveRemote,
-    setListIds: setListIds, setLists: setLists
+    setListIds: setListIds, setLists: setLists,
+    SORT_MODES: SORT_MODES, sortTracks: sortTracks,
+    normalizeText: normalizeText, dupKey: dupKey, trackScore: trackScore, findDuplicates: findDuplicates
   };
 })(window);

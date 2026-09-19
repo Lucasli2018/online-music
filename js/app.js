@@ -23,7 +23,10 @@
     lyricOffset: 0,       // 歌词整体时间偏移（毫秒）
     sleepMode: null,      // 睡眠定时：null | 'trackEnd' | 到期时间戳(数字)
     sleepTimer: null,
-    audiusMe: null        // 已连接的 Audius 账号资料
+    audiusMe: null,       // 已连接的 Audius 账号资料
+    sortMode: 'default',  // 曲库排序方式（5E）
+    multi: false,         // 批量多选态（5E）
+    selected: {}          // 多选态下已选中的 trackId（5E）
   };
   // 在线曲目播放失败时的自动跳过节流（60s 内最多 3 次，防连锁死循环）
   var onlineSkip = { count: 0, since: 0 };
@@ -117,7 +120,7 @@
     return list.slice(0, VIRTUAL_MAX);
   }
 
-  /* ---------- 可见曲目（当前歌单 + 搜索） ---------- */
+  /* ---------- 可见曲目（当前歌单 + 搜索 + 排序） ---------- */
   function getVisibleTracks() {
     var tracks = isVirtualList(state.currentListId)
       ? virtualTracks(state.currentListId)
@@ -128,6 +131,10 @@
         return (t.title || '').toLowerCase().indexOf(q) >= 0 ||
                (t.artist || '').toLowerCase().indexOf(q) >= 0;
       });
+    }
+    // 虚拟歌单自带「最近 / 最常播」排序，不再叠加用户排序，否则语义会打架
+    if (!isVirtualList(state.currentListId)) {
+      tracks = Lib.sortTracks(tracks, state.sortMode, CM.Player.getStats());
     }
     return tracks;
   }
@@ -143,8 +150,11 @@
       onPlay: playFromTrack,
       onFav: toggleFav,
       onMenu: openAddMenu,
-      onRemove: removeTrack
+      onRemove: removeTrack,
+      selection: { on: state.multi, ids: state.selected },
+      onToggleSelect: toggleSelect
     });
+    updateBatchBar();
   }
   function renderTabs() {
     var box = $('list-tabs');
@@ -170,24 +180,76 @@
       var tab = document.createElement('button');
       tab.className = 'list-tab' + (id === state.currentListId ? ' active' : '')
         + (VIRTUAL_LISTS[id] ? ' list-tab-virtual' : '');
+      tab.setAttribute('data-list-id', id);
       tab.appendChild(document.createTextNode(name + ' '));
       var cnt = document.createElement('span');
       cnt.className = 'list-tab-count';
       cnt.textContent = count;
       tab.appendChild(cnt);
       if (closable) {
+        // 重命名入口只出现在当前激活的歌单上：未激活时 tab 空间留给名称与计数，
+        // 且单击 tab 会重建整排标签，绑在旧元素上的双击监听并不可靠。
+        if (id === state.currentListId) {
+          var pen = document.createElement('span');
+          pen.className = 'tab-edit'; pen.title = '重命名歌单'; pen.textContent = '✎';
+          pen.addEventListener('click', function (e) { e.stopPropagation(); startRenameTab(id, name); });
+          tab.appendChild(pen);
+        }
         var x = document.createElement('span');
         x.className = 'tab-del'; x.title = '删除歌单'; x.textContent = '✕';
         x.addEventListener('click', function (e) { e.stopPropagation(); removeList(id); });
         tab.appendChild(x);
+        tab.title = name + '（点 ✎ 重命名）';
       }
       tab.addEventListener('click', function () { switchList(id); });
       box.appendChild(tab);
     });
+    // 保证活动标签留在可视范围内：标签栏可横向滚动，新建的歌单可能落在滚动区外，
+    // 那样名号看得见却点不到（连 ✎ / ✕ 都落在相邻面板上）。
+    var act = box.querySelector('.list-tab.active');
+    if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
+
+  /* 歌单内联重命名：回车确认 / Esc 取消 / 失焦确认
+   * 注意：不能复用创建标签时的闭包引用 —— renderTabs 会整排重建标签，
+   * 闭包里的元素可能已从 DOM 摘除（那样输入框会插到游离节点上，界面毫无反应）。
+   * 因此这里按 data-list-id 重新查找当前 DOM 中的标签。 */
+  function startRenameTab(id, oldName) {
+    var tabEl = document.querySelector('#list-tabs .list-tab[data-list-id="' + id + '"]');
+    if (!tabEl) return;
+    tabEl.innerHTML = '';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tab-rename';
+    input.value = oldName;
+    tabEl.appendChild(input);
+    input.focus();
+    input.select();
+    var done = false;
+    function commit(save) {
+      if (done) return;
+      done = true;
+      var v = input.value.trim();
+      if (save && v && v !== oldName) {
+        Lib.renameList(id, v);
+        toast('歌单已重命名为「' + v + '」');
+      }
+      renderTabs();
+    }
+    input.addEventListener('click', function (e) { e.stopPropagation(); });
+    input.addEventListener('dblclick', function (e) { e.stopPropagation(); });
+    input.addEventListener('keydown', function (e) {
+      e.stopPropagation();   // 不要触发全局快捷键（空格 / 方向键等）
+      if (e.key === 'Enter') { e.preventDefault(); commit(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+    });
+    input.addEventListener('blur', function () { commit(true); });
+  }
+
   function switchList(id) {
     state.currentListId = id;
     Lib.setCurrentList(id);
+    clearSelection();
     renderLibrary();
   }
   function removeList(id) {
@@ -251,13 +313,15 @@
     toast(on ? '已收藏 ♥' : '已取消收藏');
     renderLibrary();
   }
-  function removeTrack(track) {
+  /* 从曲库彻底移除一首歌（本地文件、进度统计、队列位置、远程持久化一并处理）
+   * 单曲移除与批量 / 去重共用这一份逻辑，避免三条路径行为不一致。 */
+  function dropTrack(track) {
+    if (!track) return;
     if (track.source === 'local') {
       CM.Storage.del(track.id).catch(function () {});
       CM.Player.revokeUrl(track.id);
     }
     Lib.removeTrack(track.id);
-    if (track.source === 'remote' || track.source === 'online') persistRemote();
     CM.Player.clearProgress(track.id);
 
     var cur = CM.Player.getTrack();
@@ -268,7 +332,196 @@
       for (var k = 0; k < q.length; k++) { if (q[k].id === track.id) { qi = k; break; } }
       if (qi >= 0) CM.Player.queueRemove(qi);
     }
+    if (track.source === 'remote' || track.source === 'online' || track.source === 'cloud') persistRemote();
+  }
+
+  function removeTrack(track) {
+    dropTrack(track);
     renderLibrary(); renderTabs(); renderQueue();
+  }
+
+  /* ---------- 批量多选（5E） ---------- */
+  function clearSelection() { state.selected = {}; }
+
+  function selectedTracks() {
+    return getVisibleTracks().filter(function (t) { return state.selected[t.id]; });
+  }
+
+  function setMulti(on) {
+    state.multi = !!on;
+    if (!state.multi) clearSelection();
+    renderLibrary();
+  }
+
+  function toggleSelect(track) {
+    if (state.selected[track.id]) delete state.selected[track.id];
+    else state.selected[track.id] = true;
+    renderLibrary();
+  }
+
+  function updateBatchBar() {
+    var bar = $('batch-bar');
+    var tools = document.querySelector('.lib-tools');
+    if (bar) bar.classList.toggle('hidden', !state.multi);
+    if (tools) tools.classList.toggle('hidden', state.multi);
+    var btn = $('btn-multi');
+    if (btn) btn.classList.toggle('active', state.multi);
+    var cnt = $('batch-count');
+    var n = selectedTracks().length;
+    if (cnt) cnt.textContent = '已选 ' + n + ' 首';
+  }
+
+  function batchAddToQueue() {
+    var list = selectedTracks();
+    if (!list.length) { toast('先勾选歌曲'); return; }
+    CM.Player.queuePushMany(list);
+    renderQueue();
+    toast('已加入队列：' + list.length + ' 首');
+    setMulti(false);
+  }
+
+  function batchAddToList(id) {
+    var list = selectedTracks();
+    var li = Lib.getList(id);
+    if (!list.length || !li) return;
+    list.forEach(function (t) { Lib.addToList(id, t.id); });
+    renderTabs();
+    toast('已把 ' + list.length + ' 首加入「' + li.name + '」');
+    setMulti(false);
+  }
+
+  function batchRemove() {
+    var list = selectedTracks();
+    if (!list.length) { toast('先勾选歌曲'); return; }
+    if (!global.confirm('从曲库移除选中的 ' + list.length + ' 首歌？（本地上传的文件会一并删除）')) return;
+    list.forEach(dropTrack);
+    setMulti(false);
+    renderLibrary(); renderTabs(); renderQueue();
+    toast('已移除 ' + list.length + ' 首');
+  }
+
+  /* 批量「加入歌单」的目标选择菜单（复用 add-menu 样式） */
+  function openListPicker(x, y) {
+    closeAddMenu();
+    var lists = Lib.getLists();
+    var custom = Object.keys(lists).filter(function (k) { return k !== 'all' && k !== 'fav'; });
+    var menu = document.createElement('div');
+    menu.className = 'add-menu';
+    menu.style.left = Math.max(8, x) + 'px';
+    menu.style.top = Math.max(8, y) + 'px';
+    function item(label, fn) {
+      var b = document.createElement('button');
+      b.className = 'add-menu-item'; b.textContent = label;
+      b.addEventListener('click', function (e) { e.stopPropagation(); fn(); closeAddMenu(); });
+      menu.appendChild(b);
+    }
+    item('＋ 收藏夹', function () { batchAddToList('fav'); });
+    if (!custom.length) item('（无自定义歌单，点歌单栏 ＋ 新建）', function () {});
+    custom.forEach(function (id) {
+      item('＋ ' + lists[id].name, function () { batchAddToList(id); });
+    });
+    document.body.appendChild(menu);
+    setTimeout(function () { document.addEventListener('click', closeAddMenu, { once: true }); }, 0);
+  }
+
+  /* ---------- 排序（5E） ---------- */
+  function buildSortSelect() {
+    var sel = $('sort-select');
+    if (!sel) return;
+    sel.innerHTML = '';
+    Object.keys(Lib.SORT_MODES).forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m;
+      o.textContent = Lib.SORT_MODES[m];
+      sel.appendChild(o);
+    });
+    var saved = null;
+    try { saved = localStorage.getItem('cm-sort'); } catch (e) { saved = null; }
+    if (saved && Lib.SORT_MODES[saved]) sel.value = saved;
+    state.sortMode = sel.value || 'default';
+  }
+
+  function changeSort(mode) {
+    if (!Lib.SORT_MODES[mode]) mode = 'default';
+    state.sortMode = mode;
+    try { localStorage.setItem('cm-sort', mode); } catch (e) {}
+    clearSelection();
+    renderLibrary();
+    toast('排序：' + Lib.SORT_MODES[mode]);
+  }
+
+  /* ---------- 重复歌曲检测（5E） ---------- */
+  var dedupeGroups = [];
+  var dedupeKeep = {};
+
+  function sourceLabel(t) {
+    return t.source === 'local' ? '💾 本地'
+      : t.source === 'cloud' ? '☁️ 云端'
+      : t.source === 'sample' ? '🎵 示例'
+      : t.source === 'online' ? '🌐 在线' : '🔗 链接';
+  }
+
+  function openDedupe() {
+    dedupeGroups = Lib.findDuplicates(Lib.resolve(Lib.listIds('all')));
+    dedupeKeep = {};
+    renderDedupe();
+    $('dedupe-modal').classList.remove('hidden');
+  }
+
+  function renderDedupe() {
+    var box = $('dedupe-list'), sum = $('dedupe-summary');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!dedupeGroups.length) {
+      sum.textContent = '没有发现重复歌曲 ✓（按「歌名 + 歌手」判定）';
+      return;
+    }
+    var total = dedupeGroups.reduce(function (n, g) { return n + g.length; }, 0);
+    sum.textContent = '发现 ' + dedupeGroups.length + ' 组重复，共 ' + total +
+      ' 条；每组默认保留信息最完整的一条，可手动改选。';
+    dedupeGroups.forEach(function (g, gi) {
+      if (!dedupeKeep[gi]) dedupeKeep[gi] = g[0].id;
+      var card = document.createElement('div');
+      card.className = 'dedupe-group';
+      var head = document.createElement('div');
+      head.className = 'dedupe-head';
+      head.textContent = (g[0].title || '未知标题') + ' · ' + (g[0].artist || '未知歌手') + '  （' + g.length + ' 条）';
+      card.appendChild(head);
+      g.forEach(function (t) {
+        var row = document.createElement('label');
+        row.className = 'dedupe-row' + (dedupeKeep[gi] === t.id ? ' keep' : '');
+        var radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'dup-' + gi;
+        radio.checked = dedupeKeep[gi] === t.id;
+        radio.addEventListener('change', function () { dedupeKeep[gi] = t.id; renderDedupe(); });
+        var info = document.createElement('span');
+        info.className = 'dedupe-info';
+        info.textContent = sourceLabel(t) + ' · ' +
+          (t.duration ? fmt(t.duration) : '时长未知') + ' · ' +
+          (t.addedAt ? new Date(t.addedAt).toLocaleDateString() : '加入时间未知');
+        row.appendChild(radio);
+        row.appendChild(info);
+        card.appendChild(row);
+      });
+      box.appendChild(card);
+    });
+  }
+
+  function applyDedupe() {
+    if (!dedupeGroups.length) { toast('没有需要处理的重复歌曲'); return; }
+    var victims = [];
+    dedupeGroups.forEach(function (g, gi) {
+      var keep = dedupeKeep[gi];
+      g.forEach(function (t) { if (t.id !== keep) victims.push(t); });
+    });
+    if (!victims.length) { toast('没有需要删除的条目'); return; }
+    if (!global.confirm('删除 ' + victims.length + ' 条重复歌曲？（每组保留选中的那一条）')) return;
+    victims.forEach(dropTrack);
+    clearSelection();
+    renderLibrary(); renderTabs(); renderQueue();
+    openDedupe();   // 删除后重新扫描，让弹窗状态与曲库一致
+    toast('已删除 ' + victims.length + ' 条重复歌曲');
   }
 
   /* ---------- 加入歌单菜单 ---------- */
@@ -1526,6 +1779,7 @@
 
     loadLyrics(); loadSettings();
     buildEqBand(); buildEqPresets();
+    buildSortSelect();
     loadEQ();
     restorePlaybackPrefs();
     updateAbUI();
@@ -1781,7 +2035,26 @@
 
     // 歌单
     $('btn-new-list').addEventListener('click', newList);
-    $('search').addEventListener('input', function () { state.query = this.value; renderLibrary(); });
+    $('search').addEventListener('input', function () {
+      state.query = this.value;
+      clearSelection();          // 搜索条件变化后旧的勾选可能已不可见，直接清空避免误删
+      renderLibrary();
+    });
+
+    // 曲库工具条：多选 / 排序 / 去重
+    bindEl('btn-multi', 'click', function () { setMulti(!state.multi); });
+    bindEl('batch-cancel', 'click', function () { setMulti(false); });
+    bindEl('batch-queue', 'click', batchAddToQueue);
+    bindEl('batch-remove', 'click', batchRemove);
+    bindEl('batch-add', 'click', function () {
+      var r = this.getBoundingClientRect();
+      openListPicker(r.left, r.bottom);
+    });
+    bindEl('sort-select', 'change', function () { changeSort(this.value); });
+    bindEl('btn-dedupe', 'click', openDedupe);
+    bindEl('dedupe-close', 'click', function () { $('dedupe-modal').classList.add('hidden'); });
+    bindEl('dedupe-modal', 'click', function (e) { if (e.target === this) this.classList.add('hidden'); });
+    bindEl('dedupe-apply', 'click', applyDedupe);
 
     // 队列
     $('btn-queue-clear').addEventListener('click', clearQueue);

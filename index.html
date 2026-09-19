@@ -62,6 +62,18 @@
       <div class="search-wrap">
         <input id="search" class="search" type="text" placeholder="🔍 搜索歌名 / 歌手" />
       </div>
+      <div class="lib-tools">
+        <button id="btn-multi" class="chip" title="批量选择：勾选多首后统一加入歌单 / 队列或删除">☑ 多选</button>
+        <select id="sort-select" class="sort-select" title="排序方式"></select>
+        <button id="btn-dedupe" class="chip" title="检测重复歌曲（按歌名 + 歌手判定）">🧹 去重</button>
+      </div>
+      <div id="batch-bar" class="batch-bar hidden">
+        <span id="batch-count" class="batch-count">已选 0 首</span>
+        <button id="batch-add" class="chip" title="把选中的歌曲加入某个歌单">加入歌单</button>
+        <button id="batch-queue" class="chip" title="把选中的歌曲加入播放队列">加入队列</button>
+        <button id="batch-remove" class="chip btn-danger" title="从曲库移除选中的歌曲">删除</button>
+        <button id="batch-cancel" class="chip">取消</button>
+      </div>
       <ul id="playlist" class="playlist"></ul>
       <p id="playlist-empty" class="empty-hint">列表空空如也～ 点击右上角「上传音乐」或「示例曲」开始吧</p>
     </section>
@@ -316,6 +328,23 @@
 
       <p id="cloud-status" class="online-status"></p>
       <div id="cloud-list" class="cloud-list"></div>
+    </div>
+  </div>
+
+  <!-- 重复歌曲检测（按歌名 + 歌手，逐组确认保留项） -->
+  <div id="dedupe-modal" class="modal hidden">
+    <div class="modal-card online-card">
+      <div class="online-head">
+        <h3>重复歌曲</h3>
+        <div class="online-head-actions">
+          <button id="dedupe-close" class="online-icon-btn" title="关闭">✕</button>
+        </div>
+      </div>
+      <p id="dedupe-summary" class="online-status"></p>
+      <div id="dedupe-list" class="dedupe-list"></div>
+      <div class="modal-actions">
+        <button id="dedupe-apply" class="btn btn-primary">删除各组未保留的条目</button>
+      </div>
     </div>
   </div>
 
