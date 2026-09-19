@@ -2,7 +2,7 @@
 <html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>珊瑚音乐 · Coral Music</title>
   <meta name="description" content="一个纯静态、可部署到 Cloudflare Pages 的在线音乐播放器" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%8A%3C/text%3E%3C/svg%3E" />
@@ -411,6 +411,7 @@
 
   <!-- 移动端迷你播放条（≤720px 显示；点信息区展开播放页，左右滑切歌，上滑展开） -->
   <div id="mini-bar" class="mini-bar">
+    <div id="mini-progress" class="mini-progress"></div>
     <div id="mini-cover" class="mini-cover">🍊</div>
     <div class="mini-info">
       <div id="mini-title" class="mini-title">未在播放</div>

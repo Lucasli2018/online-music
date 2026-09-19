@@ -2170,6 +2170,9 @@
       $('time-current').textContent = fmt(cur);
       $('time-total').textContent = fmt(dur);
       if (dur > 0 && !seeking) $('seek').value = Math.round((cur / dur) * 1000);
+      // 迷你播放条顶部进度线（仅移动端可见）
+      var mp = $('mini-progress');
+      if (mp) mp.style.width = dur > 0 ? Math.min(100, (cur / dur) * 100) + '%' : '0%';
       syncLyrics(cur);
       updateAbBand(CM.Player.getAb());
     });
