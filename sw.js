@@ -4,7 +4,7 @@
  *       用户端出现「HTML 是新版、JS 是旧版」——新按钮存在但没绑定、点击无反应。
  * 不接管音频：本地歌走 IndexedDB（不经网络），远程 / 在线音频跨域不拦截。
  */
-const CACHE = 'coral-music-v9';
+const CACHE = 'coral-music-v10';
 const SHELL = [
   './',
   './index.html',

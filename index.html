@@ -42,6 +42,7 @@
       <button id="btn-sleep" class="btn" title="睡眠定时">⏲ 定时</button>
       <button id="btn-desktop-lyrics" class="btn" title="桌面浮动歌词">🖥 桌面词</button>
       <button id="btn-theme" class="btn btn-icon" title="切换深色 / 浅色">🌙</button>
+      <button id="btn-hotkeys" class="btn btn-icon" title="键盘快捷键一览（按 ? 也可打开）">⌨</button>
     </div>
   </header>
 
@@ -80,6 +81,7 @@
 
     <!-- 正在播放 -->
     <section class="panel now-panel">
+      <button id="btn-collapse-now" class="collapse-now" title="收起播放页">⌄ 收起</button>
       <div class="cover-wrap">
         <canvas id="visualizer" class="visualizer"></canvas>
         <div class="viz-tools">
@@ -406,6 +408,31 @@
 
   <!-- 桌面浮动歌词 -->
   <div id="desktop-lyrics" class="desktop-lyrics hidden"></div>
+
+  <!-- 移动端迷你播放条（≤720px 显示；点信息区展开播放页，左右滑切歌，上滑展开） -->
+  <div id="mini-bar" class="mini-bar">
+    <div id="mini-cover" class="mini-cover">🍊</div>
+    <div class="mini-info">
+      <div id="mini-title" class="mini-title">未在播放</div>
+      <div id="mini-artist" class="mini-artist">选择一首歌开始享受</div>
+    </div>
+    <button id="mini-prev" class="mini-btn" title="上一首">⏮</button>
+    <button id="mini-play" class="mini-btn mini-play" title="播放 / 暂停">▶</button>
+    <button id="mini-next" class="mini-btn" title="下一首">⏭</button>
+  </div>
+
+  <!-- 键盘快捷键帮助 -->
+  <div id="hotkey-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="online-head">
+        <h3>键盘快捷键</h3>
+        <div class="online-head-actions">
+          <button id="hotkey-close" class="online-icon-btn" title="关闭">✕</button>
+        </div>
+      </div>
+      <div id="hotkey-list" class="hotkey-list"></div>
+    </div>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
 

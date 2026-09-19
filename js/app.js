@@ -26,7 +26,8 @@
     audiusMe: null,       // 已连接的 Audius 账号资料
     sortMode: 'default',  // 曲库排序方式（5E）
     multi: false,         // 批量多选态（5E）
-    selected: {}          // 多选态下已选中的 trackId（5E）
+    selected: {},         // 多选态下已选中的 trackId（5E）
+    mutedFrom: 0.8        // 静音前的音量，供 M 键恢复（5G）
   };
   // 在线曲目播放失败时的自动跳过节流（60s 内最多 3 次，防连锁死循环）
   var onlineSkip = { count: 0, since: 0 };
@@ -47,13 +48,21 @@
   function isImgCover(c) { return c && (c.indexOf('data:') === 0 || c.indexOf('http') === 0); }
 
   function $(id) { return document.getElementById(id); }
-  function toast(msg) {
+  // 元素缺失时静默跳过：布局调整后某个 id 被移除，不应该让后续所有绑定一起失效
+  function bindEl(id, ev, fn) { var el = $(id); if (el) el.addEventListener(ev, fn); }
+  /* 提示条：type = 'ok' 成功 / 'err' 失败 / 省略为普通信息。
+   * 图标在 CSS 里用 ::before 给出，避免每次调用都要自己拼符号。 */
+  function toast(msg, type) {
     var t = $('toast');
     if (!t) return;
-    t.textContent = msg; t.classList.remove('hidden');
+    t.textContent = msg;
+    t.className = 'toast' + (type === 'ok' ? ' toast-ok' : (type === 'err' ? ' toast-err' : ''));
+    t.classList.remove('hidden');
     clearTimeout(toast._t);
     toast._t = setTimeout(function () { t.classList.add('hidden'); }, 2200);
   }
+  function toastOk(msg) { toast(msg, 'ok'); }
+  function toastErr(msg) { toast(msg, 'err'); }
   function fmt(sec) {
     if (!isFinite(sec) || sec < 0) sec = 0;
     var m = Math.floor(sec / 60), s = Math.floor(sec % 60);
@@ -154,6 +163,8 @@
       selection: { on: state.multi, ids: state.selected },
       onToggleSelect: toggleSelect
     });
+    var emptyEl = $('playlist-empty');
+    if (emptyEl) emptyEl.textContent = emptyHintText();
     updateBatchBar();
   }
   function renderTabs() {
@@ -376,7 +387,7 @@
     if (!list.length) { toast('先勾选歌曲'); return; }
     CM.Player.queuePushMany(list);
     renderQueue();
-    toast('已加入队列：' + list.length + ' 首');
+    toastOk('已加入队列：' + list.length + ' 首');
     setMulti(false);
   }
 
@@ -386,7 +397,7 @@
     if (!list.length || !li) return;
     list.forEach(function (t) { Lib.addToList(id, t.id); });
     renderTabs();
-    toast('已把 ' + list.length + ' 首加入「' + li.name + '」');
+    toastOk('已把 ' + list.length + ' 首加入「' + li.name + '」');
     setMulti(false);
   }
 
@@ -521,7 +532,7 @@
     clearSelection();
     renderLibrary(); renderTabs(); renderQueue();
     openDedupe();   // 删除后重新扫描，让弹窗状态与曲库一致
-    toast('已删除 ' + victims.length + ' 条重复歌曲');
+    toastOk('已删除 ' + victims.length + ' 条重复歌曲');
   }
 
   /* ---------- 加入歌单菜单 ---------- */
@@ -739,7 +750,7 @@
     downloadText(base + '.lrc', raw, 'text/plain;charset=utf-8');
     // 纯文本歌词（无时间标签）导出的 .lrc 在播放器里无法同步滚动，提示但不阻断
     if (!/\[\d{1,3}:\d{2}/.test(raw)) toast('已导出 ' + base + '.lrc（无时间轴，播放器可能无法自动滚动）');
-    else toast('已导出 ' + base + '.lrc');
+    else toastOk('已导出 ' + base + '.lrc');
   }
 
   /* ---------- 可视化模式与全屏（5F） ---------- */
@@ -1295,6 +1306,197 @@
     });
   }
 
+  /* ---------- 音量：静音与步进（5G） ---------- */
+  function applyVolumeToUI(v) {
+    var el = $('volume');
+    if (el) el.value = String(Math.round(v * 100));
+    saveVolume(v);
+  }
+  function setVolumeFrom(v) {
+    v = Math.max(0, Math.min(1, v));
+    CM.Player.setVolume(v);
+    applyVolumeToUI(v);
+    return v;
+  }
+  function toggleMute() {
+    var cur = CM.Player.getVolume();
+    if (cur > 0.001) {
+      state.mutedFrom = cur;
+      setVolumeFrom(0);
+      toast('已静音（按 M 恢复）');
+    } else {
+      var v = setVolumeFrom(state.mutedFrom || 0.8);
+      toast('已取消静音（' + Math.round(v * 100) + '%）');
+    }
+  }
+  function nudgeVolume(delta) {
+    var v = setVolumeFrom(CM.Player.getVolume() + delta);
+    toast('音量 ' + Math.round(v * 100) + '%');
+  }
+
+  /* ---------- 键盘快捷键（5G） ---------- */
+  var HOTKEYS = [
+    ['空格', '播放 / 暂停'],
+    ['← / →', '上一首 / 下一首'],
+    ['↑ / ↓', '音量 ±5%'],
+    ['M', '静音 / 恢复'],
+    ['F', '收藏当前歌曲'],
+    ['L', '切换歌词 / 队列面板'],
+    ['Shift + L', '全屏沉浸歌词'],
+    ['Q', '切到播放队列'],
+    ['/', '聚焦搜索框'],
+    ['S', '随机播放开关'],
+    ['R', '循环模式（关 / 单曲 / 列表）'],
+    ['T', '切换深色 / 浅色'],
+    ['Esc', '退出全屏 / 收起播放页'],
+    ['?', '显示这份快捷键表']
+  ];
+
+  function buildHotkeyList() {
+    var box = $('hotkey-list');
+    if (!box) return;
+    box.innerHTML = '';
+    HOTKEYS.forEach(function (pair) {
+      var row = document.createElement('div');
+      row.className = 'hotkey-row';
+      var k = document.createElement('kbd');
+      k.className = 'hotkey-key';
+      k.textContent = pair[0];
+      var d = document.createElement('span');
+      d.className = 'hotkey-desc';
+      d.textContent = pair[1];
+      row.appendChild(k);
+      row.appendChild(d);
+      box.appendChild(row);
+    });
+  }
+
+  function toggleHotkeyHelp() {
+    var m = $('hotkey-modal');
+    if (m) m.classList.toggle('hidden');
+  }
+
+  function focusSearch() {
+    var s = $('search');
+    if (!s) return;
+    s.focus();
+    s.select();
+  }
+
+  function cycleRepeat() {
+    var map = { off: 'one', one: 'all', all: 'off' };
+    var icon = { off: '🔁', one: '🔂', all: '🔁' };
+    var m = map[CM.Player.getRepeat()];
+    CM.Player.setRepeat(m);
+    var b = $('btn-repeat');
+    if (b) { b.classList.toggle('active', m !== 'off'); b.textContent = icon[m]; }
+    toast(m === 'one' ? '单曲循环' : (m === 'all' ? '列表循环' : '循环：关'));
+  }
+
+  function toggleShuffle() {
+    var s = !CM.Player.getShuffle();
+    CM.Player.setShuffle(s);
+    var b = $('btn-shuffle');
+    if (b) b.classList.toggle('active', s);
+    toast(s ? '随机播放：开' : '随机播放：关');
+  }
+
+  function toggleFavCurrent() {
+    var t = CM.Player.getTrack();
+    if (!t) { toast('请先选择一首歌'); return; }
+    toggleFav(t);
+  }
+
+  /* ---------- 移动端迷你播放条与手势（5G） ---------- */
+  function updateMiniBar() {
+    var t = CM.Player.getTrack();
+    var title = $('mini-title'), artist = $('mini-artist'), cover = $('mini-cover');
+    if (title) title.textContent = t ? (t.title || '未知标题') : '未在播放';
+    if (artist) artist.textContent = t ? (t.artist || '未知歌手') : '选择一首歌开始享受';
+    if (cover) {
+      if (t && isImgCover(t.cover)) {
+        cover.style.backgroundImage = 'url("' + t.cover + '")';
+        cover.style.backgroundSize = 'cover';
+        cover.textContent = '';
+      } else {
+        cover.style.backgroundImage = '';
+        cover.style.background = (t && t.cover) || 'linear-gradient(135deg, var(--accent-soft), var(--accent))';
+        cover.textContent = '🍊';
+      }
+    }
+  }
+
+  function setMiniPlayIcon(playing) {
+    var p = $('mini-play');
+    if (p) p.textContent = playing ? '⏸' : '▶';
+  }
+
+  function expandNowPanel(on) {
+    document.body.classList.toggle('now-expanded', !!on);
+    if (on) syncLyrics(CM.Player.getCurrentTime());
+  }
+
+  function initMiniBar() {
+    var bar = $('mini-bar');
+    if (!bar) return;
+    bindEl('mini-play', 'click', function () { CM.Player.toggle(); });
+    bindEl('mini-prev', 'click', function () { CM.Player.prev(); });
+    bindEl('mini-next', 'click', function () { CM.Player.next(); });
+    bindEl('btn-collapse-now', 'click', function () { expandNowPanel(false); });
+
+    // 信息区的「点击」由下方 pointerup 的「未移动即点击」统一判定，
+    // 不再另挂 click 监听 —— 两套机制会在指针捕获后表现不一致。
+
+    // 手势：左右滑切歌、上滑展开（Pointer Events 统一触屏与鼠标）
+    var startX = 0, startY = 0, tracking = false, moved = false, downTarget = null;
+    bar.addEventListener('pointerdown', function (e) {
+      if (e.target && e.target.tagName === 'BUTTON') return;   // 按钮自己处理点击
+      tracking = true;
+      moved = false;
+      downTarget = e.target;
+      startX = e.clientX;
+      startY = e.clientY;
+      // 立刻捕获指针：之后无论滑到哪里，move/up 都会回到迷你条上，手势才有机会结算。
+      // 代价是 click 的 target 会被改写成迷你条，因此「点击」不靠 click 事件判定 ——
+      // 见 pointerup 里的「未移动即点击」。
+      try { bar.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    bar.addEventListener('pointermove', function (e) {
+      if (!tracking) return;
+      if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) moved = true;
+    });
+    bar.addEventListener('pointerup', function (e) {
+      if (!tracking) return;
+      tracking = false;
+      if (!moved) {
+        // 点信息区 → 展开播放页（用按下时的目标判断，pointerup 的 target 已被捕获改写）
+        if (downTarget && downTarget.closest && downTarget.closest('.mini-info')) expandNowPanel(true);
+        downTarget = null;
+        return;
+      }
+      var dx = e.clientX - startX, dy = e.clientY - startY;
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy)) {
+        if (dx < 0) { CM.Player.next(); toast('下一首'); }
+        else { CM.Player.prev(); toast('上一首'); }
+      } else if (dy < -48 && Math.abs(dy) > Math.abs(dx)) {
+        expandNowPanel(true);
+      }
+      downTarget = null;
+    });
+    bar.addEventListener('pointercancel', function () { tracking = false; downTarget = null; });
+    updateMiniBar();
+  }
+
+  /* ---------- 空态文案（5G） ---------- */
+  function emptyHintText() {
+    var q = state.query.trim();
+    if (q) return '没有匹配「' + q + '」的歌曲，换个关键词试试';
+    if (state.currentListId === 'recent') return '还没有播放记录 —— 听过一首歌，它就会出现在这里';
+    if (state.currentListId === 'top') return '还没有播放统计 —— 多听几首，这里会长出你的排行';
+    if (state.multi) return '这个视图里没有可选的歌曲';
+    return '这个歌单还是空的 —— 点右上角「＋ 上传音乐」「🌐 在线音乐」，或载入「🎵 示例曲」开始吧';
+  }
+
   /* ---------- 主题 ---------- */
   function toggleTheme() {
     var cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
@@ -1835,7 +2037,7 @@
         }
       });
     }).catch(function () {
-      toast('加载失败：' + (item.title || '') + '（网络受限或触发限流）');
+      toastErr('加载失败：' + (item.title || '') + '（网络受限或触发限流）');
     });
   }
 
@@ -1959,6 +2161,7 @@
       CM.Playlist.setCurrentById(track.id);
       CM.Queue.setCurrent(CM.Player.getIndex());
       showLyricsFor(track);
+      updateMiniBar();
       $('btn-play').textContent = '⏸';
       // AB 段是「针对某一首歌」的选区，换歌后自动清除，避免误导
       CM.Player.clearAb();
@@ -1973,6 +2176,7 @@
     CM.Player.on('state', function (playing) {
       $('btn-play').textContent = playing ? '⏸' : '▶';
       $('cover').classList.toggle('spin', playing);
+      setMiniPlayIcon(playing);
     });
     // 元数据就绪时回写真实时长：搜索接口常不返回时长（示例曲 / GD / 在线源），
     // 播放过一遍后统计面板的「总时长」才准确。
@@ -1985,6 +2189,7 @@
     CM.Player.on('playlistEnd', function () {
       $('btn-play').textContent = '▶';
       $('cover').classList.remove('spin');
+      setMiniPlayIcon(false);
     });
     CM.Player.on('error', function (title) {
       var cur = CM.Player.getTrack();
@@ -2012,7 +2217,7 @@
         skipOnline();
         return;
       }
-      toast('播放失败' + (title ? '：' + title : '') + '（链接可能失效或跨域受限）');
+      toastErr('播放失败' + (title ? '：' + title : '') + '（链接可能失效或跨域受限）');
     });
 
     // 控件
@@ -2031,7 +2236,7 @@
     });
 
     $('volume').addEventListener('input', function () {
-      var v = this.value / 100; CM.Player.setVolume(v); saveVolume(v);
+      setVolumeFrom(this.value / 100);
     });
 
     $('btn-shuffle').addEventListener('click', function () {
@@ -2058,6 +2263,13 @@
     $('btn-queue-tab').addEventListener('click', function () { showSide('queue'); });
 
     $('btn-theme').addEventListener('click', toggleTheme);
+
+    // 快捷键帮助 + 移动端迷你播放条
+    bindEl('btn-hotkeys', 'click', toggleHotkeyHelp);
+    bindEl('hotkey-close', 'click', toggleHotkeyHelp);
+    bindEl('hotkey-modal', 'click', function (e) { if (e.target === this) toggleHotkeyHelp(); });
+    buildHotkeyList();
+    initMiniBar();
 
     // 上传
     $('btn-upload').addEventListener('click', function () { $('file-input').click(); });
@@ -2119,7 +2331,6 @@
     $('url-modal').addEventListener('click', function (e) { if (e.target === this) closeUrlModal(); });
 
     // 在线音乐（Audius 免费音乐 API）—— 元素缺失时跳过，避免中断后续所有绑定
-    function bindEl(id, ev, fn) { var el = $(id); if (el) el.addEventListener(ev, fn); }
     bindEl('btn-online', 'click', openOnlineModal);
     bindEl('online-close', 'click', closeOnlineModal);
     bindEl('online-settings-toggle', 'click', toggleOnlineSettings);
@@ -2143,7 +2354,7 @@
       if (!global.confirm('清空全部播放统计？「最近」「最常播」也会同时清空。')) return;
       CM.Player.clearStats();
       renderStats(); renderTabs();
-      toast('播放统计已清空');
+      toastOk('播放统计已清空');
     });
     bindEl('stats-modal', 'click', function (e) { if (e.target === this) this.classList.add('hidden'); });
 
@@ -2302,17 +2513,47 @@
     });
     $('lrc-modal').addEventListener('click', function (e) { if (e.target === this) this.classList.add('hidden'); });
 
-    // 键盘：空格播放/暂停，左右切歌，Esc 退出全屏层
+    // 键盘：见 HOTKEYS 表（可用 ? 或顶栏 ⌨ 打开一览）
     document.addEventListener('keydown', function (e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      var tag = e.target && e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;   // 不与浏览器 / 系统快捷键抢
+
       if (e.key === 'Escape') {
+        var hk = $('hotkey-modal');
+        if (hk && !hk.classList.contains('hidden')) { toggleHotkeyHelp(); return; }
         if (isFullLyricsOpen()) { closeFullLyrics(); return; }
         if (isVizFull()) { toggleVizFull(); return; }
+        if (document.body.classList.contains('now-expanded')) { expandNowPanel(false); return; }
         return;
       }
-      if (e.code === 'Space') { e.preventDefault(); CM.Player.toggle(); }
-      else if (e.code === 'ArrowRight') CM.Player.next();
-      else if (e.code === 'ArrowLeft') CM.Player.prev();
+      // 空格：按钮聚焦时交给按钮自己处理，否则会「按下按钮一次、又切换播放一次」
+      if (e.code === 'Space') {
+        if (tag === 'BUTTON') return;
+        e.preventDefault();
+        CM.Player.toggle();
+        return;
+      }
+      if (e.code === 'ArrowRight') { CM.Player.next(); return; }
+      if (e.code === 'ArrowLeft') { CM.Player.prev(); return; }
+      if (e.code === 'ArrowUp') { e.preventDefault(); nudgeVolume(0.05); return; }
+      if (e.code === 'ArrowDown') { e.preventDefault(); nudgeVolume(-0.05); return; }
+
+      switch (e.key) {
+        case 'm': case 'M': toggleMute(); break;
+        case 'f': case 'F': toggleFavCurrent(); break;
+        case 'l': case 'L':
+          if (e.shiftKey) toggleFullLyrics();
+          else showSide(state.lyricsVisible ? 'queue' : 'lyrics');
+          break;
+        case 'q': case 'Q': showSide('queue'); break;
+        case 's': case 'S': toggleShuffle(); break;
+        case 'r': case 'R': cycleRepeat(); break;
+        case 't': case 'T': toggleTheme(); break;
+        case '/': e.preventDefault(); focusSearch(); break;
+        case '?': e.preventDefault(); toggleHotkeyHelp(); break;
+        default: break;
+      }
     });
 
     $('btn-theme').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';

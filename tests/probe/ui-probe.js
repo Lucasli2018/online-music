@@ -573,14 +573,16 @@ function check(name, ok, extra) {
     check('全屏层显示当前曲目信息',
       /·/.test(await evalJS('document.getElementById("lyrics-full-info").textContent')),
       await evalJS('document.getElementById("lyrics-full-info").textContent'));
-    // 点全屏歌词行跳转：先把目标行滚进视口 —— 自动滚动会把当前行居中，
-    // 播放到后段时靠前的行会跑到视口上方，直接点坐标会落空
-    await evalJS('document.querySelector("#lyrics-full-box p:nth-child(3)").scrollIntoView({block:"center"})');
-    await sleep(250);
-    await clickSel('#lyrics-full-box p:nth-child(3)');
+    // 点全屏歌词行跳转：先暂停再滚动 —— 播放中每 250ms 的 timeupdate 会重新把当前行
+    // 滚回视口中央，目标行随时可能被推出可视区
+    await evalJS('window.CM.Player.pause()');
+    await sleep(200);
+    await evalJS('document.getElementById("lyrics-full-box").scrollTop = 0');
+    await sleep(150);
+    await clickSel('#lyrics-full-box p:nth-child(2)');
     await sleep(250);
     var seeked = await evalJS('window.CM.Player.getCurrentTime()');
-    check('点全屏歌词行可跳转到对应时间', seeked >= 9.5,
+    check('点全屏歌词行可跳转到对应时间', seeked >= 4.5 && seeked < 9,
       'currentTime=' + seeked + ' duration=' + (await evalJS('window.CM.Player.getActiveDuration()')));
     // Esc 退出
     await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' });
@@ -629,6 +631,186 @@ function check(name, ok, extra) {
     await sleep(350);
     check('按 Esc 退出可视化全屏',
       !(await evalJS('document.querySelector(".cover-wrap").classList.contains("viz-fs")')));
+
+    /* ---------- 5G 交互与移动端（快捷键 / 迷你播放条与手势 / 空态 / 提示条） ---------- */
+    async function pressKey(key, code, vk, modifiers) {
+      var opt = {
+        type: 'rawKeyDown', key: key, code: code,
+        windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk,
+        modifiers: modifiers || 0
+      };
+      await send('Input.dispatchKeyEvent', opt);
+      await send('Input.dispatchKeyEvent', Object.assign({}, opt, { type: 'keyUp' }));
+      await sleep(120);
+    }
+
+    check('顶栏存在快捷键入口按钮', await evalJS('!!document.getElementById("btn-hotkeys")'));
+    await clickSel('#btn-hotkeys');
+    await sleep(150);
+    check('点 ⌨ 打开快捷键表',
+      !(await evalJS('document.getElementById("hotkey-modal").classList.contains("hidden")')));
+    var hotkeyRows = await evalJS('document.querySelectorAll("#hotkey-list .hotkey-row").length');
+    check('快捷键表列出全部条目', hotkeyRows >= 12, '条目 ' + hotkeyRows);
+    await pressKey('Escape', 'Escape', 27, 0);
+    check('Esc 关闭快捷键表',
+      await evalJS('document.getElementById("hotkey-modal").classList.contains("hidden")'));
+
+    // M 静音 / 恢复
+    var volBefore = await evalJS('window.CM.Player.getVolume()');
+    await pressKey('m', 'KeyM', 77, 0);
+    check('M 静音（音量归零）', (await evalJS('window.CM.Player.getVolume()')) === 0, '原音量 ' + volBefore);
+    await pressKey('m', 'KeyM', 77, 0);
+    var volBack = await evalJS('window.CM.Player.getVolume()');
+    check('再按 M 恢复到静音前的音量', Math.abs(volBack - volBefore) < 0.001, volBack);
+
+    // ↑ ↓ 音量步进
+    await pressKey('ArrowUp', 'ArrowUp', 38, 0);
+    var volUp = await evalJS('window.CM.Player.getVolume()');
+    check('↑ 提升音量 5%', Math.abs(volUp - (volBack + 0.05)) < 0.001, volBack + ' → ' + volUp);
+    await pressKey('ArrowDown', 'ArrowDown', 40, 0);
+    check('↓ 降低音量 5%', Math.abs((await evalJS('window.CM.Player.getVolume()')) - volBack) < 0.001);
+
+    // S 随机 / R 循环
+    var shuf0 = await evalJS('window.CM.Player.getShuffle()');
+    await pressKey('s', 'KeyS', 83, 0);
+    check('S 切换随机播放', (await evalJS('window.CM.Player.getShuffle()')) !== shuf0);
+    await pressKey('s', 'KeyS', 83, 0);
+    var rep0 = await evalJS('window.CM.Player.getRepeat()');
+    await pressKey('r', 'KeyR', 82, 0);
+    var rep1 = await evalJS('window.CM.Player.getRepeat()');
+    check('R 切换循环模式', rep1 !== rep0, rep0 + ' → ' + rep1);
+    await pressKey('r', 'KeyR', 82, 0);
+    await pressKey('r', 'KeyR', 82, 0);
+    check('循环模式转一圈回到原状', (await evalJS('window.CM.Player.getRepeat()')) === rep0);
+
+    // F 收藏当前歌曲
+    var favId = await evalJS('(window.CM.Player.getTrack()||{}).id');
+    var fav0 = await evalJS('window.CM.Library.isFav(' + JSON.stringify(favId) + ')');
+    await pressKey('f', 'KeyF', 70, 0);
+    check('F 收藏当前歌曲', (await evalJS('window.CM.Library.isFav(' + JSON.stringify(favId) + ')')) !== fav0);
+    await pressKey('f', 'KeyF', 70, 0);
+
+    // Q 队列面板 / L 歌词面板
+    await pressKey('q', 'KeyQ', 81, 0);
+    check('Q 切到播放队列面板',
+      !(await evalJS('document.getElementById("queue-view").classList.contains("hidden")')));
+    await pressKey('l', 'KeyL', 76, 0);
+    check('L 切回歌词面板',
+      !(await evalJS('document.getElementById("lyrics-view").classList.contains("hidden")')));
+    var theme0 = await evalJS('document.documentElement.getAttribute("data-theme")');
+    await pressKey('t', 'KeyT', 84, 0);
+    check('T 切换深浅色', (await evalJS('document.documentElement.getAttribute("data-theme")')) !== theme0);
+    await pressKey('t', 'KeyT', 84, 0);
+
+    // ? 打开快捷键表（Shift + /）
+    await pressKey('?', 'Slash', 191, 8);
+    check('? 打开快捷键表',
+      !(await evalJS('document.getElementById("hotkey-modal").classList.contains("hidden")')));
+    await pressKey('Escape', 'Escape', 27, 0);
+
+    // / 聚焦搜索框（放最后：聚焦后其他字母键会被输入框吞掉）
+    await pressKey('/', 'Slash', 191, 0);
+    check('/ 聚焦搜索框', (await evalJS('document.activeElement && document.activeElement.id')) === 'search');
+    await evalJS('document.activeElement.blur()');
+
+    // 空态文案：搜索无结果时给出可操作提示
+    await evalJS('(function(){var s=document.getElementById("search");s.value="zzz-不存在的歌";s.dispatchEvent(new Event("input",{bubbles:true}));})()');
+    await sleep(200);
+    var emptyText = await evalJS('document.getElementById("playlist-empty").textContent');
+    check('搜索无结果时给出针对性空态文案', /没有匹配/.test(emptyText) && /zzz/.test(emptyText), emptyText);
+    await evalJS('(function(){var s=document.getElementById("search");s.value="";s.dispatchEvent(new Event("input",{bubbles:true}));})()');
+    await sleep(200);
+
+    // 提示条类型化（成功 / 失败在样式上可区分）
+    await evalJS('(function(){var q=document.getElementById("btn-dedupe");q.click();})()');
+    await sleep(250);
+    await evalJS('(function(){document.getElementById("dedupe-close").click();})()');
+    await sleep(150);
+
+    /* ---------- 移动端（390×844 真机视口） ----------
+     * 关键：不要用 mobile:true —— 它会结合页面 viewport meta 缩放布局视口，
+     * 使 innerWidth 与声明宽度不一致（实测 390 声明得到 478），
+     * 而 CDP 的 Input 坐标仍按声明宽度解释，点击就会全部落空。 */
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    await waitFor('window.innerWidth === 390');
+    await sleep(600);
+
+    /* 在迷你条上做一次滑动：坐标全部夹在视口内 —— 滑出视口外不会派发 pointerup，
+     * 手势就永远不会结算（这是实测踩到的坑，不是浏览器 bug）。 */
+    async function swipeOn(sel, dx, dy) {
+      var p = await evalJS('(function(){var b=document.querySelector(' + JSON.stringify(sel) + ').getBoundingClientRect();' +
+        'return {x:Math.round(b.left+b.width/2),y:Math.round(b.top+b.height/2),iw:window.innerWidth,ih:window.innerHeight};})()');
+      var x1 = Math.min(Math.max(p.x, 40), p.iw - 40);
+      var y1 = Math.min(Math.max(p.y, 40), p.ih - 40);
+      var x2 = Math.min(Math.max(x1 + dx, 12), p.iw - 12);
+      var y2 = Math.min(Math.max(y1 + dy, 12), p.ih - 12);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x1, y: y1 });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x1, y: y1, button: 'left', buttons: 1, clickCount: 1 });
+      // buttons:1 是关键 —— 不带它浏览器不认为左键按住，pointermove 不会被派发到按下元素上
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2), button: 'left', buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x2, y: y2, button: 'left', buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x2, y: y2, button: 'left', buttons: 0, clickCount: 1 });
+      await sleep(400);
+    }
+
+    check('窄视口下迷你播放条出现',
+      (await evalJS('getComputedStyle(document.getElementById("mini-bar")).display')) !== 'none');
+    check('迷你条显示当前曲目',
+      (await evalJS('document.getElementById("mini-title").textContent')).length > 0 &&
+      (await evalJS('document.getElementById("mini-title").textContent')) !== '未在播放',
+      await evalJS('document.getElementById("mini-title").textContent'));
+    check('顶栏按钮在小屏可横向滚动而非堆叠',
+      (await evalJS('getComputedStyle(document.querySelector(".topbar-actions")).overflowX')) === 'auto');
+
+    var play0 = await evalJS('window.CM.Player.getTrack() ? !document.getElementById("mini-play").textContent.includes("▶") : false');
+    // 切换视口后布局需要一次重排：等按钮真的「点得到」再点，避免点到旧坐标
+    await waitFor('(function(){var b=document.getElementById("mini-play").getBoundingClientRect();' +
+      'var el=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return !!el&&el.id==="mini-play";})()');
+    await clickSel('#mini-play');
+    await sleep(300);
+    var play1 = await evalJS('document.getElementById("mini-play").textContent');
+    check('点迷你条播放键切换播放状态', play1 !== (play0 ? '⏸' : '▶'), '图标=' + play1);
+    await clickSel('#mini-play');
+    await sleep(250);
+
+    // 手势：左滑切下一首
+    var idxBefore = await evalJS('window.CM.Player.getIndex()');
+    await swipeOn('.mini-bar .mini-info', -90, 0);
+    var idxAfter = await evalJS('window.CM.Player.getIndex()');
+    check('迷你条左滑切到下一首', idxAfter !== idxBefore, idxBefore + ' → ' + idxAfter);
+    check('滑动手势不会顺带展开播放页',
+      !(await evalJS('document.body.classList.contains("now-expanded")')));
+    check('切歌后迷你条标题同步更新',
+      (await evalJS('document.getElementById("mini-title").textContent')) ===
+      (await evalJS('(window.CM.Player.getTrack()||{}).title')),
+      await evalJS('document.getElementById("mini-title").textContent'));
+
+    // 点信息区展开播放页
+    await clickSel('#mini-bar .mini-info');
+    await sleep(350);
+    check('点迷你条信息区展开全屏播放页',
+      await evalJS('document.body.classList.contains("now-expanded")'));
+    check('展开后迷你条隐藏',
+      (await evalJS('getComputedStyle(document.getElementById("mini-bar")).display')) === 'none');
+    var nowBox = await evalJS('(function(){var r=document.querySelector(".now-panel").getBoundingClientRect();' +
+      'return JSON.stringify({w:Math.round(r.width),vw:window.innerWidth});})()');
+    check('展开的播放页铺满视口', Math.abs(JSON.parse(nowBox).w - JSON.parse(nowBox).vw) <= 30, nowBox);
+    await clickSel('#btn-collapse-now');
+    await sleep(300);
+    check('点收起退出全屏播放页',
+      !(await evalJS('document.body.classList.contains("now-expanded")')));
+
+    // 上滑展开
+    await swipeOn('.mini-bar .mini-info', 0, -90);
+    check('迷你条上滑展开播放页',
+      await evalJS('document.body.classList.contains("now-expanded")'));
+    await clickSel('#btn-collapse-now');
+    await sleep(250);
+
+    await send('Emulation.clearDeviceMetricsOverride');
+    await sleep(300);
+    check('恢复桌面视口后迷你条隐藏',
+      (await evalJS('getComputedStyle(document.getElementById("mini-bar")).display')) === 'none');
 
     // 10. 无控制台错误
     var errs = await evalJS('JSON.stringify(window.__probeErrors || [])');
