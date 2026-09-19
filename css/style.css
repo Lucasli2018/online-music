@@ -253,7 +253,8 @@ body {
 /* ---------- 歌词 ---------- */
 .lyrics-panel { max-height: 78vh; display: flex; flex-direction: column; }
 .lyrics { flex: 1; overflow-y: auto; max-height: 64vh; text-align: center; line-height: 2.4; padding: 6px; }
-.lyrics p { color: var(--text-dim); font-size: 15px; transition: color 0.2s, transform 0.2s; }
+.lyrics p { color: var(--text-dim); font-size: 15px; transition: color 0.2s, transform 0.2s; cursor: pointer; }
+.lyrics p:hover { color: var(--text); }
 .lyrics p.active { color: var(--accent); font-weight: 700; font-size: 17px; transform: scale(1.04); }
 .lyrics-empty { color: var(--text-dim); }
 

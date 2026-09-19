@@ -158,6 +158,9 @@
   function toggle() { if (!active) { play(); return; } if (active.paused) play(); else pause(); }
 
   function seekRatio(r) { if (active && isFinite(active.duration)) active.currentTime = r * active.duration; }
+  function seekTo(sec) {
+    if (active && isFinite(active.duration)) active.currentTime = Math.max(0, Math.min(sec, active.duration));
+  }
   function setVolume(v) {
     v = Math.max(0, Math.min(1, v));
     audioLocal.volume = v; audioRemote.volume = v;
@@ -180,12 +183,14 @@
     next: function () { var ni = nextIndex(true); if (ni >= 0) loadIndex(ni, true); },
     prev: function () { var pi = prevIndex(); if (pi >= 0) loadIndex(pi, true); },
     seekRatio: seekRatio,
+    seekTo: seekTo,
     setVolume: setVolume,
     setRepeat: function (m) { repeat = m; },
     getRepeat: function () { return repeat; },
     setShuffle: function (s) { shuffle = s; },
     getShuffle: function () { return shuffle; },
     getIndex: function () { return index; },
+    getCurrentTime: function () { return (active && isFinite(active.currentTime)) ? active.currentTime : 0; },
     setIndex: function (i) { index = i; },
     getTrack: function () { return playlist[index]; },
     revokeUrl: revokeUrl,

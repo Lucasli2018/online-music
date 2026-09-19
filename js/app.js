@@ -17,7 +17,7 @@
     currentTrackId: null,
     currentLines: [],
     currentLineEls: [],
-    lyricsOn: false
+    lyricsVisible: true   // 侧栏当前是否停在「歌词」面板（决定高亮/滚动）
   };
 
   var palette = [
@@ -47,6 +47,15 @@
     var m = Math.floor(sec / 60), s = Math.floor(sec % 60);
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
+  function readText(file) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(r.result); };
+      r.onerror = function () { reject(r.error); };
+      r.readAsText(file);
+    });
+  }
+  function baseNameOf(n) { return n.replace(/\.[^.]+$/, ''); }
 
   /* ---------- 曲库装配 ---------- */
   function addLocalRecord(rec) {
@@ -265,12 +274,18 @@
     lines.forEach(function (l) {
       var p = document.createElement('p');
       p.textContent = l.text;
+      p.dataset.time = l.time;
+      p.addEventListener('click', function () {
+        if (!CM.Player.getTrack()) return;
+        CM.Player.seekTo(l.time);
+        syncLyrics(l.time); // 立即对齐高亮，不等下一个 timeupdate
+      });
       box.appendChild(p);
       state.currentLineEls.push(p);
     });
   }
   function syncLyrics(time) {
-    if (!state.lyricsOn || !state.currentLines.length) return;
+    if (!state.lyricsVisible || !state.currentLines.length) return;
     var idx = CM.Lyrics.activeIndex(state.currentLines, time);
     var els = state.currentLineEls;
     els.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
@@ -289,11 +304,17 @@
 
   /* ---------- 侧栏切换（歌词 / 队列） ---------- */
   function showSide(which) {
+    state.lyricsVisible = (which === 'lyrics');
     $('lyrics-view').classList.toggle('hidden', which !== 'lyrics');
     $('queue-view').classList.toggle('hidden', which !== 'queue');
     document.querySelectorAll('.panel-tab').forEach(function (t) {
       t.classList.toggle('active', t.getAttribute('data-panel') === which);
     });
+    // 「词」按钮随面板状态高亮
+    var lb = $('btn-lyrics');
+    if (lb) lb.classList.toggle('active', which === 'lyrics');
+    // 切到歌词面板时立即按当前播放进度对齐，避免停顿后才更新
+    if (state.lyricsVisible) syncLyrics(CM.Player.getCurrentTime ? CM.Player.getCurrentTime() : 0);
   }
 
   /* ---------- EQ ---------- */
@@ -513,10 +534,8 @@
     });
 
     $('btn-lyrics').addEventListener('click', function () {
-      state.lyricsOn = !state.lyricsOn;
-      this.classList.toggle('active', state.lyricsOn);
-      showSide('lyrics');
-      if (state.lyricsOn) syncLyrics(0);
+      // 词按钮 = 在「歌词」与「队列」面板间切换；同步高亮由面板可见性决定
+      showSide(state.lyricsVisible ? 'queue' : 'lyrics');
     });
     $('btn-eq').addEventListener('click', function () { $('eq-modal').classList.remove('hidden'); });
     $('btn-queue-tab').addEventListener('click', function () { showSide('queue'); });
@@ -527,25 +546,54 @@
     $('btn-upload').addEventListener('click', function () { $('file-input').click(); });
     $('file-input').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
-      files.forEach(function (f) {
-        var name = f.name.replace(/\.[^.]+$/, '');
-        var rec = {
-          id: 'local-' + Date.now() + '-' + Math.floor(Math.random() * 1e4),
-          title: name, artist: '本地', file: f,
-          cover: pickCover(name), source: 'local', addedAt: Date.now()
-        };
-        function add() {
-          addLocalRecord(rec);
-          CM.Storage.put(rec).catch(function () { toast('本地保存失败（浏览器存储不可用）'); });
-          renderLibrary(); renderQueue();
-        }
-        if (CM.ID3) {
-          CM.ID3.parseCover(f).then(function (url) { if (url) rec.cover = url; add(); })
-            .catch(function () { add(); });
-        } else add();
-      });
       e.target.value = '';
-      if (files.length) toast('已添加 ' + files.length + ' 首本地歌曲');
+      if (!files.length) return;
+
+      var audioExt = /\.(mp3|m4a|wav|ogg|flac|aac|opus|weba?)$/i;
+      var audios = files.filter(function (f) {
+        return f.type.indexOf('audio') === 0 || audioExt.test(f.name);
+      });
+      var lrcs = files.filter(function (f) { return /\.lrc$/i.test(f.name); });
+
+      // 先把 .lrc 文本读出来，按文件名（去扩展名）建索引，便于同名配对
+      var lrcMap = {};
+      var reads = lrcs.map(function (f) {
+        return readText(f).then(function (txt) { lrcMap[baseNameOf(f.name)] = txt; });
+      });
+
+      Promise.all(reads).then(function () {
+        var added = 0;
+        audios.forEach(function (f) {
+          var name = baseNameOf(f.name);
+          var lrcText = lrcMap[name];
+          var rec = {
+            id: 'local-' + Date.now() + '-' + Math.floor(Math.random() * 1e4),
+            title: name, artist: '本地', file: f,
+            cover: pickCover(name), source: 'local', addedAt: Date.now()
+          };
+          if (lrcText) { rec.lrc = lrcText; }
+          function add() {
+            addLocalRecord(rec);
+            if (lrcText) { state.lyrics[rec.id] = lrcText; saveLyrics(); }
+            CM.Storage.put(rec).catch(function () { toast('本地保存失败（浏览器存储不可用）'); });
+            added++;
+            renderLibrary(); renderQueue();
+            // 若当前正在播放这首歌，立即刷新歌词
+            var cur = CM.Player.getTrack();
+            if (cur && cur.id === rec.id) showLyricsFor(rec);
+          }
+          if (CM.ID3) {
+            CM.ID3.parseCover(f).then(function (url) { if (url) rec.cover = url; add(); })
+              .catch(function () { add(); });
+          } else add();
+        });
+        if (added) {
+          var tip = lrcs.length ? ('（已自动关联 ' + lrcs.length + ' 个歌词文件）') : '';
+          toast('已添加 ' + added + ' 首本地歌曲' + tip);
+        } else if (!audios.length) {
+          toast('未识别到音频文件（可同时选择同名 .lrc 歌词）');
+        }
+      });
     });
 
     $('btn-add-url').addEventListener('click', openUrlModal);
@@ -621,6 +669,9 @@
     });
 
     $('btn-theme').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+
+    // 同步初始侧栏状态（默认停在歌词面板，词按钮高亮）
+    showSide('lyrics');
 
     // PWA：注册 Service Worker（离线可开 / 可安装到桌面）
     if ('serviceWorker' in navigator) {
