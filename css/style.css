@@ -520,3 +520,14 @@ body {
 .online-lyric[data-state="yes"] { color: var(--accent-deep, #993c1d); font-weight: 700; }
 .online-lyric[data-state="probing"] { opacity: 0.6; }
 .online-lyric[data-state="no"] { opacity: 0.55; }
+
+/* Audius 账号区（OAuth 2.0 PKCE） */
+.audius-account {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 2px 0 8px; font-size: 12px;
+}
+.account-label {
+  color: var(--text-secondary, #8a8178); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.audius-account .chip { flex: 0 0 auto; }

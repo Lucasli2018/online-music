@@ -75,7 +75,7 @@
   global.CM = global.CM || {};
   global.CM.Online = {
     search: search, streamUrl: streamUrl, toRecord: toRecord,
-    getApiKey: getApiKey, setApiKey: setApiKey,
+    getApiKey: getApiKey, setApiKey: setApiKey, normalize: normalize,
     base: BASE, app: APP
   };
 })(window);

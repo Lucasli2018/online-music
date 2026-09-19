@@ -22,7 +22,8 @@
     deskLyricsOn: false,  // 桌面浮动歌词开关
     lyricOffset: 0,       // 歌词整体时间偏移（毫秒）
     sleepMode: null,      // 睡眠定时：null | 'trackEnd' | 到期时间戳(数字)
-    sleepTimer: null
+    sleepTimer: null,
+    audiusMe: null        // 已连接的 Audius 账号资料
   };
 
   var palette = [
@@ -551,6 +552,7 @@
     $('online-modal').classList.remove('hidden');
     var ak = $('online-apikey');
     if (ak && !ak.value) ak.value = (CM.Online.getApiKey ? CM.Online.getApiKey() : '') || '';
+    refreshAccount();
     setTimeout(function () { var q = $('online-query'); if (q) q.focus(); }, 0);
   }
   function closeOnlineModal() {
@@ -599,6 +601,55 @@
       box.appendChild(row);
     });
   }
+  /* ---------- Audius 账号（OAuth 2.0 PKCE，只读） ---------- */
+  function renderAccount(me) {
+    var label = $('audius-account');
+    var login = $('btn-audius-login');
+    var mine = $('btn-audius-mine');
+    var out = $('btn-audius-logout');
+    if (!label) return;
+    var on = CM.Auth.isLoggedIn();
+    label.textContent = on
+      ? (me ? ('已连接：' + (me.name || me.handle || 'Audius 用户')) : '已连接 Audius 账号')
+      : '未连接 Audius 账号';
+    if (login) login.classList.toggle('hidden', on);
+    if (mine) mine.classList.toggle('hidden', !on);
+    if (out) out.classList.toggle('hidden', !on);
+  }
+  function refreshAccount() {
+    if (!CM.Auth.isLoggedIn()) { state.audiusMe = null; renderAccount(null); return; }
+    renderAccount(state.audiusMe);
+    CM.Auth.fetchMe().then(function (me) {
+      state.audiusMe = me;
+      renderAccount(me);
+    }).catch(function (e) {
+      var label = $('audius-account');
+      if (label) label.textContent = '连接异常：' + (e && e.message ? e.message : '未知');
+    });
+  }
+  function audiusLogin() {
+    if (!CM.Online.getApiKey()) { toast('请先填写 Audius API Key，再点「连接账号」'); return; }
+    toast('正在跳转到 Audius 授权…');
+    CM.Auth.login().catch(function (e) { toast('登录失败：' + (e && e.message ? e.message : '未知')); });
+  }
+  function audiusLogout() {
+    CM.Auth.clearToken();
+    state.audiusMe = null;
+    renderAccount(null);
+    toast('已断开 Audius 账号');
+  }
+  function loadMyTracks() {
+    var st = $('online-status');
+    if (st) st.textContent = '正在载入我的曲目…';
+    CM.Auth.myTracks(50).then(function (items) {
+      renderOnlineResults(items);
+      if (st) st.textContent = items.length ? ('我的曲目：' + items.length + ' 首') : '我的曲目为空';
+      probeLyricsForResults(items);
+    }).catch(function (e) {
+      if (st) st.textContent = '载入失败：' + (e && e.message ? e.message : '未知');
+    });
+  }
+
   // 逐条（限流）探测 LRCLIB 是否有歌词，更新结果行标记
   function probeLyricsForResults(items) {
     var i = 0;
@@ -904,6 +955,10 @@
       CM.Online.setApiKey(this.value);
       toast(this.value.trim() ? '已保存 Audius API Key（提升速率配额）' : '已清除 Audius API Key');
     });
+    // Audius 账号（OAuth 2.0 PKCE）
+    bindEl('btn-audius-login', 'click', audiusLogin);
+    bindEl('btn-audius-logout', 'click', audiusLogout);
+    bindEl('btn-audius-mine', 'click', loadMyTracks);
 
     $('btn-load-samples').addEventListener('click', function () {
       var have = {};
@@ -1041,6 +1096,15 @@
       });
       el.addEventListener('pointerup', function () { dragging = false; });
     })();
+
+    // Audius OAuth 回调处理（URL 带 ?code=&state= 时）—— 完成登录并刷新账号区
+    CM.Auth.handleRedirect().then(function (t) {
+      if (t) toast('已连接 Audius 账号');
+      refreshAccount();
+    }).catch(function (e) {
+      toast('Audius 登录失败：' + (e && e.message ? e.message : '未知'));
+      refreshAccount();
+    });
 
     // PWA：注册 Service Worker（离线可开 / 可安装到桌面）
     // 新 SW 接管后自动刷新一次，避免「HTML 已更新、JS 仍是 SW 缓存的旧版」造成新按钮无绑定

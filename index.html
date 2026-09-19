@@ -161,6 +161,12 @@
         <input id="online-apikey" type="text" placeholder="粘贴 API Key 可提升速率配额" />
         <p class="online-key-hint">只需 API Key（官方允许放在前端）。<b>Bearer Token 是后端专用凭据</b>，填进网页等于公开泄露，本页不接受也不保存它。</p>
       </details>
+      <div class="audius-account">
+        <span id="audius-account" class="account-label">未连接 Audius 账号</span>
+        <button id="btn-audius-login" class="chip" title="用 Audius 账号登录（OAuth 2.0 PKCE，只读权限）">连接账号</button>
+        <button id="btn-audius-mine" class="chip hidden" title="载入我在 Audius 发布的曲目">我的曲目</button>
+        <button id="btn-audius-logout" class="chip hidden" title="断开连接">退出</button>
+      </div>
       <p id="online-status" class="online-status"></p>
       <div id="online-results" class="online-results"></div>
       <div class="modal-actions">
@@ -242,6 +248,7 @@
   <script src="js/samples.js"></script>
   <script src="js/lyrics.js"></script>
   <script src="js/online.js"></script>
+  <script src="js/auth.js"></script>
   <script src="js/visualizer.js"></script>
   <script src="js/id3.js"></script>
   <script src="js/library.js"></script>
