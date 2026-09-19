@@ -17,6 +17,7 @@
     currentTrackId: null,
     currentLines: [],
     currentLineEls: [],
+    currentWordEls: [],   // 每行对应的逐字 span 数组（用于卡拉OK高亮）
     lyricsVisible: true,  // 侧栏当前是否停在「歌词」面板（决定主面板滚动）
     deskLyricsOn: false,  // 桌面浮动歌词开关
     lyricOffset: 0,       // 歌词整体时间偏移（毫秒）
@@ -268,17 +269,37 @@
     if (!box) return;
     box.innerHTML = '';
     state.currentLineEls = [];
+    state.currentWordEls = [];
     if (!lines.length) {
-      var p = document.createElement('p');
-      p.className = 'lyrics-empty';
-      p.textContent = '暂无歌词。点击「编辑」粘贴 LRC 文本，或添加链接时填写歌词地址。';
-      box.appendChild(p);
+      var empty = document.createElement('p');
+      empty.className = 'lyrics-empty';
+      empty.textContent = '暂无歌词。点「🔍 匹配」在线获取，或「✎ 编辑」粘贴 LRC。';
+      box.appendChild(empty);
       return;
     }
     lines.forEach(function (l) {
       var p = document.createElement('p');
-      p.textContent = l.text;
       p.dataset.time = l.time;
+      var main = document.createElement('span');
+      main.className = 'lyric-main';
+      if (l.words && l.words.length) {
+        l.words.forEach(function (w) {
+          var s = document.createElement('span');
+          s.className = 'w';
+          s.textContent = w.w;
+          if (w.t != null) s.dataset.t = w.t;
+          main.appendChild(s);
+        });
+      } else {
+        main.textContent = l.text;
+      }
+      p.appendChild(main);
+      if (l.sub) {
+        var sub = document.createElement('span');
+        sub.className = 'lyric-sub';
+        sub.textContent = l.sub;
+        p.appendChild(sub);
+      }
       p.addEventListener('click', function () {
         if (!CM.Player.getTrack()) return;
         CM.Player.seekTo(l.time);
@@ -286,6 +307,7 @@
       });
       box.appendChild(p);
       state.currentLineEls.push(p);
+      state.currentWordEls.push(Array.prototype.slice.call(p.querySelectorAll('.w')));
     });
   }
   function syncLyrics(time) {
@@ -293,6 +315,16 @@
     var idx = state.currentLines.length ? CM.Lyrics.activeIndex(state.currentLines, t) : -1;
     var els = state.currentLineEls;
     els.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
+    // 逐字卡拉OK：当前行按绝对时间点亮已唱字
+    state.currentWordEls.forEach(function (arr, i) {
+      if (!arr.length) return;
+      var on = (i === idx);
+      arr.forEach(function (sp) {
+        var wt = sp.dataset.t;
+        if (wt == null) { sp.classList.toggle('sung', on); return; }
+        sp.classList.toggle('sung', on && parseFloat(wt) <= t);
+      });
+    });
     if (state.lyricsVisible && idx >= 0) {
       var a = els[idx];
       if (a && a.scrollIntoView) a.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -302,10 +334,67 @@
   function updateDesktopLyrics(idx) {
     var el = $('desktop-lyrics');
     if (!el) return;
-    if (!state.deskLyricsOn) { el.classList.add('hidden'); return; }
+    if (!state.deskLyricsOn) { el.classList.add('hidden'); el._idx = -1; return; }
     var line = state.currentLines[idx];
-    el.textContent = line ? line.text : '♪';
-    el.classList.remove('hidden');
+    if (!line) { el.classList.add('hidden'); el._idx = -1; return; }
+    var t = (CM.Player.getCurrentTime ? CM.Player.getCurrentTime() : 0) + state.lyricOffset / 1000;
+    if (el._idx !== idx) {
+      el.classList.remove('hidden');
+      el.innerHTML = '';
+      if (line.words && line.words.length) {
+        var wrap = document.createElement('span'); wrap.className = 'dl-main';
+        line.words.forEach(function (w) {
+          var s = document.createElement('span'); s.className = 'w'; s.textContent = w.w;
+          if (w.t != null) s.dataset.t = w.t;
+          wrap.appendChild(s);
+        });
+        el.appendChild(wrap);
+      } else {
+        var main = document.createElement('span'); main.className = 'dl-main';
+        main.textContent = line.text;
+        el.appendChild(main);
+      }
+      if (line.sub) {
+        var sub = document.createElement('span'); sub.className = 'dl-sub';
+        sub.textContent = line.sub;
+        el.appendChild(sub);
+      }
+      el._words = Array.prototype.slice.call(el.querySelectorAll('.w'));
+      el._idx = idx;
+    }
+    if (el._words && el._words.length) {
+      el._words.forEach(function (sp) {
+        var wt = sp.dataset.t;
+        if (wt == null) return;
+        sp.classList.toggle('sung', parseFloat(wt) <= t);
+      });
+    }
+  }
+
+  /* ---------- 在线自动匹配歌词 ---------- */
+  function matchLyrics() {
+    var track = CM.Player.getTrack();
+    if (!track) { toast('请先选择一首歌'); return; }
+    var title = (track.title || '').trim();
+    if (!title) { toast('缺少歌名，无法匹配'); return; }
+    var btn = $('btn-lyrics-match');
+    if (btn) btn.disabled = true;
+    CM.Lyrics.fetchLyrics({
+      title: title,
+      artist: track.artist || '',
+      album: track.album || '',
+      duration: CM.Player.getActiveDuration ? CM.Player.getActiveDuration() : null
+    }).then(function (lrc) {
+      var id = track.id;
+      state.lyrics[id] = lrc; saveLyrics();
+      track.lrc = lrc;
+      showLyricsFor(track);
+      toast('已自动匹配歌词：' + title);
+    }).catch(function (e) {
+      toast('未找到匹配歌词，可手动编辑（' + (e && e.message ? e.message : '服务不可用') + '）');
+    }).then(function () {
+      if (btn) btn.disabled = false;
+    });
   }
 
   /* ---------- 主题 ---------- */
@@ -729,6 +818,8 @@
       t.addEventListener('click', function () { showSide(t.getAttribute('data-panel')); });
     });
 
+    // 歌词在线自动匹配
+    $('btn-lyrics-match').addEventListener('click', matchLyrics);
     // 歌词编辑
     $('btn-lyrics-edit').addEventListener('click', function () {
       var id = state.currentTrackId;

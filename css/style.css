@@ -447,3 +447,23 @@ body {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); cursor: move; user-select: none;
 }
 .desktop-lyrics.hidden { display: none; }
+
+/* ---------- V2：逐字卡拉OK / 双语 ---------- */
+.lyrics p .lyric-main { display: block; }
+.lyrics p .w { transition: color 0.12s linear; }
+.lyrics p:not(.active) .w { color: var(--text-dim); }
+.lyrics p.active .w:not(.sung) { color: var(--text-dim); opacity: 0.5; }
+.lyrics p.active .w.sung { color: var(--accent); }
+.lyrics p .lyric-sub {
+  display: block; margin-top: 3px; font-size: 12px; font-weight: 400;
+  opacity: 0.6; color: var(--text-dim);
+}
+.lyrics p.active .lyric-sub { opacity: 0.9; color: var(--accent-deep, #993c1d); }
+
+#btn-lyrics-match:disabled { opacity: 0.5; cursor: progress; }
+
+.desktop-lyrics .dl-main { display: inline; }
+.desktop-lyrics .w { transition: color 0.15s linear; }
+.desktop-lyrics .w:not(.sung) { color: rgba(255, 255, 255, 0.55); }
+.desktop-lyrics .w.sung { color: #fff; }
+.desktop-lyrics .dl-sub { display: block; font-size: 12px; font-weight: 400; opacity: 0.85; margin-top: 2px; }

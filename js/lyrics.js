@@ -1,20 +1,75 @@
-/* lyrics.js — LRC 歌词解析与同步
+/* lyrics.js — LRC 歌词解析、同步与在线匹配
  * 解析标准 [mm:ss.xx] 时间标签，提供按当前时间取行的方法。
  * 支持：
  *  - 一行多时间标签：[00:01.00][00:05.00]歌词
  *  - 整体时间偏移标签 [offset:-500] / [offset:+500]（毫秒，可正负）
  *  - 忽略元数据标签行（[ti:]/[ar:]/[al:]/[by:]/[length:] 等无时间标签的行）
+ *  - 逐字卡拉OK：增强格式内联 <mm:ss.xx>字级时间标签
+ *  - 双语：同时间戳多行自动合并（主文本 + 翻译副文本）
+ *  - 在线自动匹配：fetchLyrics，对接 LRCLIB 公共服务（CORS 友好、免 key）
  */
 (function (global) {
   'use strict';
 
   var LINE_RE = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
   var OFFSET_RE = /\[offset\s*:\s*(-?\d+)\s*\]/i;
+  var INLINE_RE = /<(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?>/g;
+  var API_BASE = 'https://lrclib.net/api/get';
+  var SEARCH_BASE = 'https://lrclib.net/api/search';
+
+  function toSec(min, sec, ms) {
+    return min * 60 + sec + (ms ? parseInt(ms.padEnd(3, '0').slice(0, 3), 10) / 1000 : 0);
+  }
+
+  // 提取行内内联字级时间标签，返回 [{t:绝对秒, w:文本}]
+  // 例：[00:12.00]<00:12.50>Hel<00:13.00>lo  ->  [{t:12.5,w:'Hel'},{t:13,w:'lo'}]
+  function parseWords(text) {
+    if (!text) return [];
+    INLINE_RE.lastIndex = 0;
+    var parts = [], last = 0, m, hasTag = false;
+    while ((m = INLINE_RE.exec(text)) !== null) {
+      hasTag = true;
+      if (m.index > last) {
+        var seg = text.slice(last, m.index);
+        if (parts.length) parts[parts.length - 1].w += seg;
+        else parts.push({ t: null, w: seg }); // 行首无时间前缀
+      }
+      parts.push({ t: toSec(+m[1], +m[2], m[3]), w: '' });
+      last = INLINE_RE.lastIndex;
+    }
+    if (!hasTag) return []; // 无内联字级标签 → 非逐字行（避免干扰双语合并判定）
+    if (last < text.length) {
+      var tail = text.slice(last);
+      if (parts.length) parts[parts.length - 1].w += tail;
+      else parts.push({ t: null, w: tail });
+    }
+    return parts.filter(function (p) { return p.w && p.w.length; });
+  }
+
+  // 把同时间戳、且后续行非逐字的多行合并为 主+副（双语/翻译）
+  function mergeBilingual(lines) {
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var cur = lines[i];
+      while (i + 1 < lines.length &&
+             Math.abs(lines[i + 1].time - cur.time) < 1e-6 &&
+             !(lines[i + 1].words && lines[i + 1].words.length)) {
+        i++;
+        var nxt = lines[i];
+        var ntxt = (nxt.words && nxt.words.length)
+          ? nxt.words.map(function (w) { return w.w; }).join('')
+          : nxt.text;
+        cur.sub = cur.sub ? (cur.sub + ' / ' + ntxt) : ntxt;
+      }
+      out.push(cur);
+    }
+    return out;
+  }
 
   function parse(lrcText) {
     if (!lrcText || !lrcText.trim()) return [];
     var lines = lrcText.split(/\r?\n/);
-    var out = [];
+    var raw = [];
     var offset = 0; // 秒
     lines.forEach(function (line) {
       var om = OFFSET_RE.exec(line);
@@ -24,19 +79,17 @@
       var tags = [];
       var m;
       while ((m = LINE_RE.exec(line)) !== null) {
-        var min = parseInt(m[1], 10);
-        var sec = parseInt(m[2], 10);
-        var ms = m[3] ? parseInt(m[3].padEnd(3, '0').slice(0, 3), 10) : 0;
-        tags.push(min * 60 + sec + ms / 1000);
+        tags.push(toSec(+m[1], +m[2], m[3]));
       }
       if (!tags.length) return; // 元数据标签 / 空行：跳过，不渲染为歌词
       var text = line.replace(LINE_RE, '').trim();
+      var words = parseWords(text);
       tags.forEach(function (t) {
-        out.push({ time: Math.max(0, t + offset), text: text || '♪' });
+        raw.push({ time: Math.max(0, t + offset), text: text || '♪', words: words });
       });
     });
-    out.sort(function (a, b) { return a.time - b.time; });
-    return out;
+    raw.sort(function (a, b) { return a.time - b.time; });
+    return mergeBilingual(raw);
   }
 
   // 返回当前时间对应的歌词行索引（用于高亮 + 滚动）
@@ -52,10 +105,10 @@
   }
 
   // 按字节猜测文本编码并解码，解决中文 LRC 乱码。
-  // 常见情形：Windows 下导出的 .lrc 多为 GBK / GB2312，被当 UTF-8 读取会乱码。
   function decode(buf) {
     var u8 = new Uint8Array(buf);
-    var start = (u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xBF) ? 3 : 0; // 去除 UTF-8 BOM
+    var start = (u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xEF) ? 3
+              : (u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xBF) ? 3 : 0; // 去除 UTF-8 BOM
     var slice = u8.subarray(start);
     try {
       return new TextDecoder('utf-8', { fatal: true }).decode(slice); // 先严格尝试 UTF-8
@@ -65,6 +118,50 @@
     }
   }
 
+  function fetchJSON(u) {
+    return fetch(u, { headers: { 'Lrclib-Client': 'CoralMusic/1.0' } }).then(function (r) {
+      if (r.status === 404) throw new Error('404');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  // 在线自动匹配歌词：按 歌名/歌手(+专辑+时长) 查询 LRCLIB，失败回退搜索。
+  // 返回 LRC 原文字符串。需要联网，依赖 lrclib.net 公共服务（CORS 友好、免 key）。
+  function fetchLyrics(opts) {
+    opts = opts || {};
+    var title = (opts.title || '').trim();
+    var artist = (opts.artist || '').trim();
+    if (!title) return Promise.reject(new Error('缺少歌名'));
+
+    function byQuery() {
+      var u = API_BASE + '?track_name=' + encodeURIComponent(title) +
+              '&artist_name=' + encodeURIComponent(artist || 'unknown');
+      if (opts.album) u += '&album_name=' + encodeURIComponent(opts.album);
+      if (opts.duration) u += '&duration=' + Math.round(opts.duration);
+      return fetchJSON(u);
+    }
+    function bySearch() {
+      var q = SEARCH_BASE + '?q=' + encodeURIComponent(title);
+      return fetchJSON(q).then(function (list) {
+        var arr = Array.isArray(list) ? list : (list && list.data ? list.data : []);
+        if (!arr.length) throw new Error('无搜索结果');
+        return fetchJSON(API_BASE + '?id=' + encodeURIComponent(arr[0].id));
+      });
+    }
+    return byQuery().catch(function () { return bySearch(); }).then(function (d) {
+      var lrc = d && (d.syncedLyrics || d.plainLyrics);
+      if (!lrc) throw new Error('无歌词数据');
+      return lrc;
+    });
+  }
+
   global.CM = global.CM || {};
-  global.CM.Lyrics = { parse: parse, activeIndex: activeIndex, decode: decode };
+  global.CM.Lyrics = {
+    parse: parse,
+    activeIndex: activeIndex,
+    decode: decode,
+    fetchLyrics: fetchLyrics,
+    API_BASE: API_BASE
+  };
 })(window);

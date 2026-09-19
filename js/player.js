@@ -252,6 +252,7 @@
     },
     setRate: function (r) { rate = r; if (active) { active.playbackRate = r; active.defaultPlaybackRate = r; } },
     getRate: function () { return rate; },
-    setStopAfterCurrent: function (v) { stopAfterCurrent = !!v; }
+    setStopAfterCurrent: function (v) { stopAfterCurrent = !!v; },
+    getActiveDuration: function () { return active && isFinite(active.duration) ? active.duration : 0; }
   };
 })(window);
