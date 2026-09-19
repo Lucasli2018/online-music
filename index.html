@@ -36,6 +36,7 @@
       <button id="btn-export" class="btn" title="导出歌单/远程歌曲/歌词为 JSON 备份">⤓ 备份</button>
       <button id="btn-import" class="btn" title="从 JSON 备份恢复歌单">⤒ 恢复</button>
       <button id="btn-eq" class="btn" title="均衡器（仅本地歌曲生效）">🎚 EQ</button>
+      <button id="btn-stats" class="btn" title="播放统计：曲库概况、来源分布、播放排行">📊 统计</button>
       <button id="btn-rate" class="btn" title="倍速播放">⏩ 倍速</button>
       <button id="btn-sleep" class="btn" title="睡眠定时">⏲ 定时</button>
       <button id="btn-desktop-lyrics" class="btn" title="桌面浮动歌词">🖥 桌面词</button>
@@ -228,6 +229,20 @@
         <button id="eq-reset" class="btn">重置</button>
         <button id="eq-close" class="btn btn-primary">完成</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 播放统计弹窗 -->
+  <div id="stats-modal" class="modal hidden">
+    <div class="modal-card stats-card">
+      <div class="online-head">
+        <h3>播放统计</h3>
+        <div class="online-head-actions">
+          <button id="stats-clear" class="online-icon-btn" title="清空播放统计">🗑</button>
+          <button id="stats-close" class="online-icon-btn" title="关闭">✕</button>
+        </div>
+      </div>
+      <div id="stats-body" class="stats-body"></div>
     </div>
   </div>
 

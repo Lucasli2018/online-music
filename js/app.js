@@ -95,9 +95,31 @@
     }
   }
 
+  /* ---------- 虚拟歌单（按播放统计实时生成，不落 localStorage） ---------- */
+  var VIRTUAL_LISTS = { recent: { name: '最近' }, top: { name: '最常播' } };
+  var VIRTUAL_ORDER = ['recent', 'top'];
+  var VIRTUAL_MAX = 50;
+
+  function isVirtualList(id) { return !!VIRTUAL_LISTS[id]; }
+
+  function virtualTracks(id) {
+    var stats = (CM.Player.getStats && CM.Player.getStats()) || {};
+    var list = Lib.resolve(Lib.listIds('all')).filter(function (t) { return stats[t.id]; });
+    if (id === 'recent') {
+      list.sort(function (a, b) { return stats[b.id].at - stats[a.id].at; });
+    } else {
+      list.sort(function (a, b) {
+        return (stats[b.id].c - stats[a.id].c) || (stats[b.id].at - stats[a.id].at);
+      });
+    }
+    return list.slice(0, VIRTUAL_MAX);
+  }
+
   /* ---------- 可见曲目（当前歌单 + 搜索） ---------- */
   function getVisibleTracks() {
-    var tracks = Lib.resolve(Lib.listIds(state.currentListId));
+    var tracks = isVirtualList(state.currentListId)
+      ? virtualTracks(state.currentListId)
+      : Lib.resolve(Lib.listIds(state.currentListId));
     var q = state.query.trim().toLowerCase();
     if (q) {
       tracks = tracks.filter(function (t) {
@@ -127,18 +149,31 @@
     if (!box) return;
     box.innerHTML = '';
     var lists = Lib.getLists();
-    var order = ['all', 'fav'].concat(Object.keys(lists).filter(function (k) { return k !== 'all' && k !== 'fav'; }));
+    var custom = Object.keys(lists).filter(function (k) { return k !== 'all' && k !== 'fav'; });
+    var order = ['all', 'fav'].concat(VIRTUAL_ORDER).concat(custom);
     order.forEach(function (id) {
       var li = lists[id];
-      if (!li) return;
+      var name, count, closable;
+      if (li) {
+        name = li.name;
+        count = li.ids ? li.ids.length : 0;
+        closable = (id !== 'all' && id !== 'fav');
+      } else if (VIRTUAL_LISTS[id]) {
+        name = VIRTUAL_LISTS[id].name;
+        count = virtualTracks(id).length;
+        closable = false;
+      } else {
+        return;
+      }
       var tab = document.createElement('button');
-      tab.className = 'list-tab' + (id === state.currentListId ? ' active' : '');
-      tab.appendChild(document.createTextNode(li.name + ' '));
+      tab.className = 'list-tab' + (id === state.currentListId ? ' active' : '')
+        + (VIRTUAL_LISTS[id] ? ' list-tab-virtual' : '');
+      tab.appendChild(document.createTextNode(name + ' '));
       var cnt = document.createElement('span');
       cnt.className = 'list-tab-count';
-      cnt.textContent = (li.ids ? li.ids.length : 0);
+      cnt.textContent = count;
       tab.appendChild(cnt);
-      if (id !== 'all' && id !== 'fav') {
+      if (closable) {
         var x = document.createElement('span');
         x.className = 'tab-del'; x.title = '删除歌单'; x.textContent = '✕';
         x.addEventListener('click', function (e) { e.stopPropagation(); removeList(id); });
@@ -477,6 +512,98 @@
       st.textContent = '获取失败：' + (e && e.message ? e.message : '网络受限');
     });
   }
+
+  /* ---------- 播放统计 ---------- */
+  var SOURCE_LABEL = { local: '本地上传', remote: '远程链接', online: '在线音乐', sample: '示例曲' };
+
+  function fmtLong(sec) {
+    sec = Math.round(sec || 0);
+    if (!sec) return '0 分钟';
+    var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+    if (h && m) return h + ' 小时 ' + m + ' 分';
+    if (h) return h + ' 小时';
+    return m + ' 分钟';
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+
+  function renderStats() {
+    var box = $('stats-body');
+    if (!box) return;
+    box.innerHTML = '';
+
+    var all = Lib.resolve(Lib.listIds('all'));
+    var bySource = {}, totalSec = 0;
+    all.forEach(function (t) {
+      var k = t.source || 'other';
+      bySource[k] = (bySource[k] || 0) + 1;
+      if (t.duration) totalSec += t.duration;
+    });
+    var stats = (CM.Player.getStats && CM.Player.getStats()) || {};
+    var heard = Object.keys(stats);
+    var plays = 0;
+    heard.forEach(function (k) { plays += stats[k].c || 0; });
+
+    var cards = el('div', 'stats-cards');
+    [['曲目总数', String(all.length)], ['总时长', fmtLong(totalSec)],
+     ['累计播放', plays + ' 次'], ['听过的歌', heard.length + ' 首']].forEach(function (pair) {
+      var c = el('div', 'stat-card');
+      c.appendChild(el('span', 'stat-num', pair[1]));
+      c.appendChild(el('span', 'stat-label', pair[0]));
+      cards.appendChild(c);
+    });
+    box.appendChild(cards);
+
+    var srcBox = el('div', 'stats-section');
+    srcBox.appendChild(el('h4', null, '来源分布'));
+    var srcKeys = Object.keys(bySource);
+    if (srcKeys.length) {
+      var total = all.length || 1;
+      srcKeys.forEach(function (k) {
+        var row = el('div', 'stat-bar-row');
+        row.appendChild(el('span', 'stat-bar-name', SOURCE_LABEL[k] || k));
+        var track = el('div', 'stat-bar-track');
+        var fill = el('div', 'stat-bar-fill');
+        fill.style.width = Math.max(2, Math.round((bySource[k] / total) * 100)) + '%';
+        track.appendChild(fill);
+        row.appendChild(track);
+        row.appendChild(el('span', 'stat-bar-val', bySource[k] + ' 首'));
+        srcBox.appendChild(row);
+      });
+    } else {
+      srcBox.appendChild(el('p', 'empty-hint', '曲库还没有歌曲'));
+    }
+    box.appendChild(srcBox);
+
+    var rankBox = el('div', 'stats-section');
+    rankBox.appendChild(el('h4', null, '播放排行 Top 10'));
+    var ranked = all.filter(function (t) { return stats[t.id]; })
+      .sort(function (a, b) { return stats[b.id].c - stats[a.id].c; })
+      .slice(0, 10);
+    if (ranked.length) {
+      var ul = el('ul', 'stat-rank');
+      ranked.forEach(function (t, i) {
+        var li = el('li', 'stat-rank-item');
+        li.appendChild(el('span', 'stat-rank-no', String(i + 1)));
+        var meta = el('span', 'stat-rank-meta');
+        meta.appendChild(el('span', 'stat-rank-title', t.title || '未知标题'));
+        meta.appendChild(el('span', 'stat-rank-artist', t.artist || '未知歌手'));
+        li.appendChild(meta);
+        li.appendChild(el('span', 'stat-rank-count', stats[t.id].c + ' 次'));
+        ul.appendChild(li);
+      });
+      rankBox.appendChild(ul);
+    } else {
+      rankBox.appendChild(el('p', 'empty-hint', '还没有播放记录，听几首就有数据了'));
+    }
+    box.appendChild(rankBox);
+  }
+
+  function openStats() { renderStats(); $('stats-modal').classList.remove('hidden'); }
 
   /* ---------- 主题 ---------- */
   function toggleTheme() {
@@ -1011,6 +1138,14 @@
       $('btn-play').textContent = playing ? '⏸' : '▶';
       $('cover').classList.toggle('spin', playing);
     });
+    // 元数据就绪时回写真实时长：搜索接口常不返回时长（示例曲 / GD / 在线源），
+    // 播放过一遍后统计面板的「总时长」才准确。
+    CM.Player.on('meta', function (dur) {
+      var t = CM.Player.getTrack();
+      if (!t || !(dur > 0) || Math.abs((t.duration || 0) - dur) < 1) return;
+      t.duration = dur;
+      if (t.source === 'remote' || t.source === 'online') persistRemote();
+    });
     CM.Player.on('playlistEnd', function () {
       $('btn-play').textContent = '▶';
       $('cover').classList.remove('spin');
@@ -1164,6 +1299,23 @@
     bindEl('btn-audius-login', 'click', audiusLogin);
     bindEl('btn-audius-logout', 'click', audiusLogout);
     bindEl('btn-audius-mine', 'click', loadMyTracks);
+
+    // 播放统计面板
+    bindEl('btn-stats', 'click', openStats);
+    bindEl('stats-close', 'click', function () { $('stats-modal').classList.add('hidden'); });
+    bindEl('stats-clear', 'click', function () {
+      if (!global.confirm('清空全部播放统计？「最近」「最常播」也会同时清空。')) return;
+      CM.Player.clearStats();
+      renderStats(); renderTabs();
+      toast('播放统计已清空');
+    });
+    bindEl('stats-modal', 'click', function (e) { if (e.target === this) this.classList.add('hidden'); });
+
+    // 播放后刷新「最近 / 最常播」的计数
+    CM.Player.on('played', function () {
+      if (isVirtualList(state.currentListId)) renderLibrary();
+      else renderTabs();
+    });
 
     $('btn-load-samples').addEventListener('click', function () {
       var have = {};

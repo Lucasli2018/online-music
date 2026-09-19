@@ -13,7 +13,7 @@
   'use strict';
 
   var LINE_RE = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
-  var OFFSET_RE = /\[offset\s*:\s*(-?\d+)\s*\]/i;
+  var OFFSET_RE = /\[\s*offset\s*:\s*([+-]?\d+)\s*\]/i; // 支持 [offset:500] / [offset:-500] / [offset:+500] / [ offset : -500 ]
   var INLINE_RE = /<(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?>/g;
   var API_BASE = 'https://lrclib.net/api/get';
   var SEARCH_BASE = 'https://lrclib.net/api/search';

@@ -23,6 +23,7 @@
 
   var urlCache = {};    // 本地歌 objectURL 缓存
   var progress = {};    // 每首歌播放进度（trackId -> 秒），持久化
+  var stats = {};       // 每首歌播放统计（trackId -> { c: 次数, at: 最近播放时间戳 }），持久化
   var handlers = {};
 
   function on(name, fn) { (handlers[name] = handlers[name] || []).push(fn); }
@@ -60,13 +61,20 @@
   function bind(el) {
     el.addEventListener('timeupdate', function () {
       if (el === active && playlist[index]) saveProgress(playlist[index], el.currentTime);
+      if (el === active) updatePositionState(false);
       emit('time', el.currentTime, el.duration || 0);
     });
     el.addEventListener('loadedmetadata', function () {
       emit('meta', el.duration || 0);
     });
-    el.addEventListener('play', function () { emit('state', true); });
-    el.addEventListener('pause', function () { emit('state', false); });
+    el.addEventListener('play', function () {
+      if (el === active) setPlaybackState('playing');
+      emit('state', true);
+    });
+    el.addEventListener('pause', function () {
+      if (el === active) setPlaybackState('paused');
+      emit('state', false);
+    });
     el.addEventListener('ended', function () { handleEnded(); });
     el.addEventListener('error', function () {
       emit('error', active ? active.title : '');
@@ -100,16 +108,45 @@
   function clearProgress(id) {
     if (!id) return;
     delete progress[id];
+    delete stats[id]; // 移除歌曲时一并清理其播放统计，避免残留
     try { localStorage.setItem('cm-progress', JSON.stringify(progress)); } catch (e) {}
+    saveStats();
+  }
+
+  /* ---------- 播放统计（次数 / 最近播放时间）---------- */
+  function loadStats() {
+    try { return JSON.parse(localStorage.getItem('cm-stats') || '{}') || {}; } catch (e) { return {}; }
+  }
+  function saveStats() {
+    try { localStorage.setItem('cm-stats', JSON.stringify(stats)); } catch (e) {}
+  }
+  // 真正开始播放一首歌时调用（点播 / 切歌 / 单曲循环重播），驱动「最近播放」「最常播」
+  function markPlayed(track) {
+    if (!track || !track.id) return;
+    var s = stats[track.id] || { c: 0, at: 0 };
+    s.c += 1;
+    s.at = Date.now();
+    stats[track.id] = s;
+    saveStats();
+    emit('played', track.id, s.c, s.at);
   }
 
   function handleEnded() {
-    if (repeat === 'one') { active.currentTime = 0; active.play(); return; }
-    if (stopAfterCurrent) { stopAfterCurrent = false; emit('state', false); emit('playlistEnd'); return; }
+    if (repeat === 'one') { markPlayed(playlist[index]); active.currentTime = 0; active.play(); return; }
+    if (stopAfterCurrent) {
+      stopAfterCurrent = false;
+      setPlaybackState('paused');
+      emit('state', false); emit('playlistEnd');
+      return;
+    }
     var ni = nextIndex(false);
-    if (ni === -1) { emit('playlistEnd'); return; }
+    if (ni === -1) { setPlaybackState('none'); emit('playlistEnd'); return; }
     loadIndex(ni, true);
   }
+
+  // 具名函数：既供导出，也供系统媒体键（上一首 / 下一首）复用
+  function next() { var ni = nextIndex(true); if (ni >= 0) loadIndex(ni, true); }
+  function prev() { var pi = prevIndex(); if (pi >= 0) loadIndex(pi, true); }
 
   function nextIndex(manual) {
     if (!playlist.length) return -1;
@@ -151,8 +188,10 @@
     applySavedProgress(track);
     emit('track', track, i);
     emit('cover', track.cover || null);
+    setMediaMetadata(track);
+    updatePositionState(true);
     if (CM && CM.Visualizer) CM.Visualizer.setAnalyser(isLocal && analyser ? analyser : null);
-    if (autoplay) play();
+    if (autoplay) { markPlayed(track); play(); }
   }
 
   function play() {
@@ -166,20 +205,34 @@
     if (p && p.catch) p.catch(function (e) { emit('error', active && active.src, e); });
     if (active.volume < targetVolume - 0.001) { active.volume = 0; fadeTo(active, targetVolume, 200); }
     if (CM && CM.Visualizer) CM.Visualizer.start();
+    setPlaybackState('playing');
   }
-  function pause() { if (active) active.pause(); if (CM && CM.Visualizer) CM.Visualizer.stop(); }
+  function pause() {
+    if (active) active.pause();
+    if (CM && CM.Visualizer) CM.Visualizer.stop();
+    setPlaybackState('paused');
+  }
   function toggle() { if (!active) { play(); return; } if (active.paused) play(); else pause(); }
 
   function seekRatio(r) { if (active && isFinite(active.duration)) active.currentTime = r * active.duration; }
   function seekTo(sec) {
-    if (active && isFinite(active.duration)) active.currentTime = Math.max(0, Math.min(sec, active.duration));
+    if (active && isFinite(active.duration)) {
+      active.currentTime = Math.max(0, Math.min(sec, active.duration));
+      updatePositionState(true);
+    }
   }
   function fadeTo(el, target, ms) {
     if (!el) return;
-    var start = el.volume, t0 = (global.performance ? performance.now() : Date.now());
+    var start = el.volume;
+    var t0 = (global.performance && global.performance.now) ? global.performance.now() : Date.now();
     function step(now) {
-      var p = ms <= 0 ? 1 : Math.min(1, (now - t0) / ms);
-      el.volume = start + (target - start) * p;
+      // p 必须双向钳制：rAF 时间戳可能早于起点（同帧内注册），
+      // 只做 Math.min(1, x) 会让 p 变负，进而算出负音量 → 赋值抛 IndexSizeError，
+      // 淡入被中断、音量停在 0（表现为「点了播放没声音」）。
+      var p = ms <= 0 ? 1 : (now - t0) / ms;
+      if (!isFinite(p)) p = 1; // 时间戳异常（NaN/Infinity）时直接落到目标值，避免写入非法音量
+      p = Math.max(0, Math.min(1, p));
+      el.volume = Math.max(0, Math.min(1, start + (target - start) * p));
       if (p < 1) requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
@@ -190,10 +243,75 @@
     audioLocal.volume = v; audioRemote.volume = v;
   }
 
+  /* ---------- 系统媒体控制（Media Session API）----------
+   * 让锁屏 / 通知栏 / 蓝牙耳机线控能显示歌曲信息并控制播放。
+   * 环境不支持（无 navigator.mediaSession）时静默降级，不影响播放。
+   */
+  function msApi() { return (global.navigator && global.navigator.mediaSession) || null; }
+
+  function setPlaybackState(state) {
+    var ms = msApi();
+    if (!ms) return;
+    try { ms.playbackState = state; } catch (e) {}
+  }
+
+  function setMediaMetadata(track) {
+    var ms = msApi();
+    if (!ms || !track || !global.MediaMetadata) return;
+    try {
+      var artwork = [];
+      if (track.cover) artwork.push({ src: track.cover, sizes: '512x512' });
+      ms.metadata = new global.MediaMetadata({
+        title: track.title || '未知标题',
+        artist: track.artist || '未知艺术家',
+        album: track.album || '珊瑚音乐',
+        artwork: artwork
+      });
+    } catch (e) {}
+  }
+
+  var lastPosSync = 0;
+  function updatePositionState(force) {
+    var ms = msApi();
+    if (!ms || !ms.setPositionState || !active) return;
+    var dur = active.duration;
+    if (!isFinite(dur) || dur <= 0) return;
+    var now = Date.now();
+    if (!force && now - lastPosSync < 1000) return; // 系统进度条每秒同步一次即可
+    lastPosSync = now;
+    try {
+      ms.setPositionState({
+        duration: dur,
+        playbackRate: active.playbackRate || 1,
+        position: Math.max(0, Math.min(active.currentTime || 0, dur))
+      });
+    } catch (e) {}
+  }
+
+  function seekBy(delta) { if (active) seekTo((active.currentTime || 0) + delta); }
+
+  function setupMediaSession() {
+    var ms = msApi();
+    if (!ms || !ms.setActionHandler) return;
+    var set = function (action, fn) {
+      try { ms.setActionHandler(action, fn); } catch (e) {}
+    };
+    set('play', function () { play(); });
+    set('pause', function () { pause(); });
+    set('stop', function () { pause(); setPlaybackState('none'); });
+    set('previoustrack', function () { prev(); });
+    set('nexttrack', function () { next(); });
+    set('seekbackward', function (d) { seekBy(-((d && d.seekOffset) || 10)); });
+    set('seekforward', function (d) { seekBy((d && d.seekOffset) || 10); });
+    set('seekto', function (d) { if (d && typeof d.seekTime === 'number') seekTo(d.seekTime); });
+  }
+
   function init() {
     progress = loadProgress();
+    stats = loadStats();
     bind(audioLocal); bind(audioRemote);
     audioLocal.volume = 0.8; audioRemote.volume = 0.8;
+    setupMediaSession();
   }
 
   global.CM = global.CM || {};
@@ -204,8 +322,8 @@
     getPlaylist: function () { return playlist; },
     loadIndex: loadIndex,
     play: play, pause: pause, toggle: toggle,
-    next: function () { var ni = nextIndex(true); if (ni >= 0) loadIndex(ni, true); },
-    prev: function () { var pi = prevIndex(); if (pi >= 0) loadIndex(pi, true); },
+    next: next,
+    prev: prev,
     seekRatio: seekRatio,
     seekTo: seekTo,
     setVolume: setVolume,
@@ -219,6 +337,9 @@
     getTrack: function () { return playlist[index]; },
     revokeUrl: revokeUrl,
     clearProgress: clearProgress,
+    getStats: function () { return stats; },
+    getStat: function (id) { return stats[id] || null; },
+    clearStats: function () { stats = {}; saveStats(); },
     queuePush: function (track) { if (track) playlist.push(track); },
     queueInsertNext: function (track) {
       if (!track) return;
@@ -232,7 +353,12 @@
       if (i < index) index--;
       else if (i === index) {
         if (playlist.length) loadIndex(Math.min(i, playlist.length - 1), false);
-        else { index = -1; if (CM.Visualizer && CM.Visualizer.stop) CM.Visualizer.stop(); emit('playlistEnd'); }
+        else {
+          index = -1;
+          if (CM.Visualizer && CM.Visualizer.stop) CM.Visualizer.stop();
+          setPlaybackState('none');
+          emit('playlistEnd');
+        }
       }
     },
     queueMove: function (from, to) {
@@ -250,7 +376,11 @@
       eqFilters[1].gain.value = gains[1] || 0;
       eqFilters[2].gain.value = gains[2] || 0;
     },
-    setRate: function (r) { rate = r; if (active) { active.playbackRate = r; active.defaultPlaybackRate = r; } },
+    setRate: function (r) {
+      rate = r;
+      if (active) { active.playbackRate = r; active.defaultPlaybackRate = r; }
+      updatePositionState(true);
+    },
     getRate: function () { return rate; },
     setStopAfterCurrent: function (v) { stopAfterCurrent = !!v; },
     getActiveDuration: function () { return active && isFinite(active.duration) ? active.duration : 0; }

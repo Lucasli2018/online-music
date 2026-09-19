@@ -33,6 +33,8 @@
 - **播放淡入淡出**：切歌与开头平滑渐入，避免爆音
 - **桌面浮动歌词**：独立迷你歌词条，可拖动、可随时开关
 - **歌词偏移微调**：拖动滑块整体校准歌词时间（±5 秒），补偿手写 LRC 快慢
+- **系统媒体控制**：锁屏 / 通知栏 / 蓝牙耳机线控直接显示封面与歌名，支持播放暂停、上下曲、±10 秒快进快退、进度条定位
+- **播放历史与统计**：自动记录每首歌的播放次数与最近播放时间；歌单栏内置「最近」「最常播」两个虚拟歌单；顶栏「📊 统计」查看曲库总数、总时长、来源分布与播放排行 Top 10（可一键清空）
 - **PWA 离线 / 可安装**：缓存应用壳，断网也能打开；可「添加到主屏幕」当独立 App 使用
 - **歌单备份与恢复**：一键导出歌单 / 远程歌曲 / 歌词 / 设置为 JSON 文件，换设备或分享时再导入还原
 - **快捷键**：`空格` 播放/暂停，`←` `→` 上一首/下一首
@@ -42,7 +44,7 @@
 ## 🗂 项目结构
 
 ```
-music-player/
+online-music/
 ├── index.html          # 页面骨架（含防深色模式闪烁的主题脚本）
 ├── manifest.webmanifest # PWA 清单（名称 / 主题色 / 图标）
 ├── sw.js               # Service Worker（缓存应用壳，离线可开、可安装）
@@ -64,7 +66,12 @@ music-player/
 │   ├── id3.js           # 零依赖解析音频内嵌封面（ID3v2 APIC）
 │   └── app.js           # 总控（曲库/歌单/队列/搜索/歌词/主题/快捷键）
 ├── scripts/
-│   └── check.js         # 部署前语法校验（node --check 遍历 js/）
+│   └── check.js         # 部署前双闸门：语法校验（node --check）+ 逻辑测试（node --test）
+├── tests/
+│   ├── helpers.js       # 沙箱加载器：在 Node 里加载浏览器端 IIFE 模块（零依赖）
+│   ├── *.test.js        # 用例：歌词解析 / 曲库歌单 / 在线音源 / 播放引擎 / 媒体控制 / 统计 / 淡入淡出
+│   └── probe/
+│       └── ui-probe.js  # 真浏览器交互探针（无头 Chrome + CDP 真实鼠标事件，16 项断言）
 └── wrangler.toml        # Cloudflare Pages 部署配置
 ```
 
@@ -76,12 +83,12 @@ music-player/
 
 ```bash
 # Python
-cd music-player
+cd online-music
 python -m http.server 8080
 # 浏览器打开 http://localhost:8080
 
 # 或 Node
-npx serve music-player
+npx serve online-music
 ```
 
 ---
@@ -91,10 +98,10 @@ npx serve music-player
 ### 方式一：Cloudflare 控制台（推荐）
 
 1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create** → **Pages**
-2. 连接 Git 仓库 `li-luoqiang/music-player`
+2. 连接 Git 仓库 `li-luoqiang/online-music`
 3. 构建配置：
    - **Framework preset**：`None`
-   - **Build command**：`node scripts/check.js`（部署前语法校验，失败则阻断部署；纯静态无构建步骤）
+   - **Build command**：`node scripts/check.js`（部署前跑语法 + 测试双闸门，失败则阻断部署；纯静态无构建步骤）
    - **Build output directory**：`.`
 4. 保存并部署，稍等片刻即可得到 `*.pages.dev` 地址
 
@@ -102,7 +109,7 @@ npx serve music-player
 
 ```bash
 npm install -g wrangler
-cd music-player
+cd online-music
 wrangler pages deploy .
 ```
 
@@ -134,6 +141,9 @@ wrangler pages deploy .
 | 备份歌单 | 点右上角 ⤓ 备份，下载 JSON（含歌单 / 远程歌曲 / 歌词 / 设置） |
 | 恢复歌单 | 点 ⤒ 恢复，选择备份 JSON 还原 |
 | 安装到桌面 | 浏览器菜单「安装」/「添加到主屏幕」（PWA，断网也能打开） |
+| 系统媒体控制 | 手机锁屏 / 通知栏 / 蓝牙耳机线控直接控制播放与切歌，无需打开页面 |
+| 查看播放统计 | 点顶栏「📊 统计」查看曲库总数、总时长、来源分布与播放排行 Top 10；右上 🗑 可清空统计 |
+| 浏览最近 / 最常播 | 左栏歌单栏的「最近」「最常播」标签，按播放记录自动生成（不占歌单表） |
 | 切换深浅色 | 点右上角 🌙 / ☀️ |
 | 倍速播放 | 点顶栏「⏩ 倍速」选 0.5x / 0.75x / 1x / 1.25x / 1.5x / 2x |
 | 睡眠定时 | 点顶栏「⏲ 定时」选 15 / 30 / 60 分钟或「本曲播完停止」 |
@@ -156,6 +166,8 @@ wrangler pages deploy .
 - **EQ 仅本地生效**：均衡器基于 Web Audio 链路，只对本地上传歌曲生效；远程 / 示例曲走直连播放，不受 EQ 影响。
 - **备份不含本地音频文件**：导出的 JSON 记录歌单结构、远程歌曲链接与歌词，但本地上传的音频二进制存在浏览器 IndexedDB，无法跨设备携带；换设备恢复后本地歌会缺失，需重新上传（远程歌与歌单结构可正常恢复）。
 - **无后端**：本项目是纯前端静态站点，不包含任何服务器端代码，天然适配 Cloudflare Pages 的静态托管。
+- **开发校验（双闸门 + 交互探针）**：`node scripts/check.js` 会跑「语法校验 + 逻辑测试」（114 条用例，零第三方依赖，CI 与部署前自动执行）；涉及事件绑定 / 交互的改动，另外跑 `node tests/probe/ui-probe.js` —— 它会启动无头 Chrome、用 **CDP 真实鼠标事件**驱动页面并断言结果（需本机装 Chrome，可用 `CHROME_PATH` 指定路径）。这不是洁癖：本项目曾两次出现「静态检查全绿但功能实际失效」（SW cache-first 卡旧版 JS、重写绑定后拖拽失效）。
+- **播放统计只存本机**：「最近」「最常播」与 📊 统计的数据存在浏览器 localStorage（`cm-stats`），清缓存或换设备即丢失；删除某首歌时其统计会一并清理。
 - **在线歌词匹配依赖第三方服务**：「🔍 匹配」候选来自 [GD 音乐台](https://music.gdstudio.xyz)（网易云源，含翻译，频率限制 5 分钟 50 次）与 [LRCLIB](https://lrclib.net) 公共服务，需要联网；均为社区维护，匹配不到时请用「✎ 编辑」手动粘贴 LRC。GD 音乐台 API 仅供学习研究，请勿商用。
 
 ---
