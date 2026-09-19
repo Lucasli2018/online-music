@@ -259,6 +259,135 @@ function check(name, ok, extra) {
     await clickSel('#cloud-close');
     check('云端弹窗可关闭', await waitFor('document.getElementById("cloud-modal").classList.contains("hidden")'));
 
+    /* ---------- 5D 音效（十段 EQ / 交叉淡入淡出 / 响度均衡 / AB 循环） ---------- */
+    check('顶栏存在「🎛 音效」按钮', await evalJS('!!document.getElementById("btn-eq")'));
+    await clickSel('#btn-eq');
+    check('音效弹窗打开', await waitFor('!document.getElementById("fx-modal").classList.contains("hidden")'));
+
+    var bandCount = await evalJS('document.querySelectorAll("#eq-band .eq-cell").length');
+    check('均衡器渲染十段滑块', bandCount === 10, '实际 ' + bandCount);
+    var presetCount = await evalJS('document.querySelectorAll("#eq-presets .eq-preset").length');
+    check('预设按钮齐全（≥6 个）', presetCount >= 6, '实际 ' + presetCount);
+    check('默认预设标记为「平坦」',
+      (await evalJS('document.getElementById("eq-current").textContent')) === '平坦');
+
+    // 点「低音增强」预设 → 滑块值、播放引擎 EQ、标记三处同步
+    await clickSel('#eq-presets .eq-preset[data-preset="bass"]');
+    await sleep(120);
+    var bassEQ = await evalJS('JSON.stringify(window.CM.Player.getEQ())');
+    var presets = await evalJS('JSON.stringify(window.CM.Player.EQ_PRESETS.bass)');
+    check('点击预设后引擎 EQ 等于该预设', bassEQ === presets, bassEQ);
+    check('预设按钮高亮切到「低音增强」',
+      await evalJS('document.querySelector(\'#eq-presets .eq-preset[data-preset="bass"]\').classList.contains("active")'));
+    check('十段滑块视觉值随之更新',
+      (await evalJS('document.querySelector("#eq-band .eq-cell .eq-gain").textContent')) !== '0');
+
+    // 真实键盘交互：聚焦首段滑块后按方向键，验证 input 事件真的绑上了
+    await clickSel('#eq-band .eq-cell:first-child input');
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 38, code: 'ArrowUp', key: 'ArrowUp' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 38, code: 'ArrowUp', key: 'ArrowUp' });
+    await sleep(120);
+    var eq0 = await evalJS('window.CM.Player.getEQ()[0]');
+    var input0 = await evalJS('parseInt(document.querySelector("#eq-band .eq-cell:first-child input").value,10)');
+    check('方向键调整滑块后引擎 EQ 同步', eq0 === input0 + 0 && input0 > 0, 'input=' + input0 + ' eq=' + eq0);
+
+    // 自定义值应取消预设高亮
+    check('偏离预设后标记为「自定义」',
+      (await evalJS('document.getElementById("eq-current").textContent')) === '自定义');
+
+    // 交叉淡入淡出：聚焦后按方向键（步长 0.5）
+    await clickSel('#fx-crossfade');
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 39, code: 'ArrowRight', key: 'ArrowRight' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 39, code: 'ArrowRight', key: 'ArrowRight' });
+    await sleep(120);
+    var cf = await evalJS('window.CM.Player.getCrossfade()');
+    check('交叉淡入淡出可调且写入引擎', cf > 0 && cf <= 8, 'crossfade=' + cf);
+    check('交叉时长标签不再显示「关闭」',
+      (await evalJS('document.getElementById("fx-crossfade-val").textContent')) !== '关闭');
+
+    // 响度均衡开关
+    await clickSel('#fx-loudness');
+    await sleep(120);
+    check('勾选后响度均衡开启', await evalJS('window.CM.Player.getLoudness()') === true);
+
+    // 变速不变调：先在音效弹窗改，再关掉弹窗去倍速弹窗改，验证双向同步
+    await clickSel('#fx-keep-pitch');
+    await sleep(120);
+    check('音效弹窗关闭变速不变调后引擎同步', await evalJS('window.CM.Player.getKeepPitch()') === false);
+    check('倍速弹窗的同一开关同步为未勾选',
+      await evalJS('document.getElementById("rate-keep-pitch").checked') === false);
+
+    // 恢复默认：EQ 归零、交叉关闭、变速不变调回到开启
+    await clickSel('#fx-reset');
+    await sleep(150);
+    check('恢复默认后 EQ 归零',
+      (await evalJS('JSON.stringify(window.CM.Player.getEQ())')) === '[0,0,0,0,0,0,0,0,0,0]',
+      await evalJS('JSON.stringify(window.CM.Player.getEQ())'));
+    check('恢复默认后交叉淡入淡出关闭', await evalJS('window.CM.Player.getCrossfade()') === 0);
+    check('恢复默认后变速不变调回到开启', await evalJS('window.CM.Player.getKeepPitch()') === true);
+
+    await clickSel('#fx-close');
+    check('音效弹窗可关闭', await waitFor('document.getElementById("fx-modal").classList.contains("hidden")'));
+
+    // 倍速弹窗里的同一开关（弹窗之间必须双向同步，不能各说各话）
+    await clickSel('#btn-rate');
+    check('倍速弹窗打开', await waitFor('!document.getElementById("rate-modal").classList.contains("hidden")'));
+    await clickSel('#rate-keep-pitch');
+    await sleep(120);
+    check('倍速弹窗关闭变速不变调后引擎同步', await evalJS('window.CM.Player.getKeepPitch()') === false);
+    check('音效弹窗的同一开关同步为未勾选',
+      await evalJS('document.getElementById("fx-keep-pitch").checked') === false);
+    await clickSel('#rate-close');
+    await waitFor('document.getElementById("rate-modal").classList.contains("hidden")');
+    // 复位，避免影响后续断言
+    await evalJS('window.CM.Player.setKeepPitch(true)');
+
+    // AB 段循环：真实点击 A / B / 清除
+    check('AB 控件初始为未设置状态',
+      (await evalJS('document.getElementById("ab-label").textContent')) === 'AB 未设置');
+    await clickSel('#btn-ab-a');
+    await sleep(120);
+    check('设 A 点后记录起点并高亮', await evalJS('window.CM.Player.getAb().a') !== null &&
+      await evalJS('document.getElementById("btn-ab-a").classList.contains("active")'));
+    check('设 A 点后标签给出下一步提示',
+      /待设 B/.test(await evalJS('document.getElementById("ab-label").textContent')),
+      await evalJS('document.getElementById("ab-label").textContent'));
+
+    var abDur = await evalJS('window.CM.Player.getActiveDuration()');
+    if (abDur > 1) {
+      // 先把播放位置挪到 10% 与 30%，得到一段明确的循环区间（避免曲目恰好已播完导致 A=B）
+      await evalJS('window.CM.Player.seekRatio(0.1)');
+      await sleep(150);
+      await clickSel('#btn-ab-a');
+      var aAt = await evalJS('window.CM.Player.getAb().a');
+      await evalJS('window.CM.Player.seekRatio(0.3)');
+      await sleep(150);
+      await clickSel('#btn-ab-b');
+      await sleep(150);
+      check('设 B 点后进入 AB 循环', await evalJS('window.CM.Player.getAb().on') === true,
+        'A=' + aAt + ' B=' + (await evalJS('window.CM.Player.getAb().b')));
+      check('AB 标签显示区间与循环状态',
+        /循环中/.test(await evalJS('document.getElementById("ab-label").textContent')),
+        await evalJS('document.getElementById("ab-label").textContent'));
+      check('进度条下方出现 AB 区间高亮',
+        !(await evalJS('document.getElementById("ab-band").classList.contains("hidden")')));
+      await clickSel('#btn-ab-clear');
+      await sleep(120);
+      check('清除后 AB 循环关闭', await evalJS('window.CM.Player.getAb().on') === false);
+    } else {
+      // 音频未真正加载（离线环境）时，B 点应被拒绝 —— 同样验证了校验链路
+      await clickSel('#btn-ab-b');
+      await sleep(150);
+      check('（离线降级）B 点未晚于 A 点时被拒绝', await evalJS('window.CM.Player.getAb().on') === false,
+        'duration=' + abDur);
+      check('（离线降级）拒绝原因以文案给出',
+        /0.3 秒/.test(await evalJS('document.getElementById("toast").textContent')),
+        await evalJS('document.getElementById("toast").textContent'));
+      await clickSel('#btn-ab-clear');
+      await sleep(120);
+      check('清除后 AB 状态复位', await evalJS('window.CM.Player.getAb().a') === null);
+    }
+
     // 10. 无控制台错误
     var errs = await evalJS('JSON.stringify(window.__probeErrors || [])');
     check('页面运行期间无未捕获错误', errs === '[]', errs);

@@ -400,7 +400,58 @@ body {
 /* ---------- 歌词 / 队列切换时隐藏 ---------- */
 .side-view.hidden { display: none; }
 
-/* ---------- EQ ---------- */
+/* ---------- 音效弹窗（十段 EQ + 播放引擎，阶段 5D） ---------- */
+.fx-card { max-width: 640px; }
+.fx-section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.fx-section:first-of-type { border-top: none; padding-top: 4px; }
+.fx-section-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.fx-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.fx-val { font-size: 12px; color: var(--accent-deep); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.eq-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.eq-presets .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 十段滑块：writing-mode 让原生 range 变为竖直（现代浏览器一致支持） */
+.eq-band {
+  display: grid; grid-template-columns: repeat(10, 1fr);
+  gap: 4px; height: 138px; align-items: stretch;
+  padding: 8px 4px; border-radius: 12px; background: var(--bg-sunken);
+}
+.eq-cell { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
+.eq-cell .eq-gain { font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.eq-cell .eq-gain.up { color: var(--accent-deep); font-weight: 700; }
+.eq-cell input[type=range] { width: 100%; height: 92px; margin: 0; }
+.eq-cell .eq-freq { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
+.fx-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text); margin-top: 10px;
+}
+.fx-row input[type=range] { flex: 1; min-width: 0; }
+.fx-row-label { flex: 0 0 auto; color: var(--text-dim); font-size: 13px; }
+.fx-switch { cursor: pointer; user-select: none; }
+.fx-switch input[type=checkbox] {
+  width: 16px; height: 16px; flex: 0 0 auto; margin: 0;
+  accent-color: var(--accent); cursor: pointer;
+}
+.fx-switch span { font-size: 13px; color: var(--text); }
+.fx-hint { margin-top: 10px; font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+.rate-pitch { margin: 4px 0 12px; }
+
+/* ---------- AB 段循环 ---------- */
+.ab-row { display: flex; align-items: center; gap: 8px; width: 100%; margin: -8px 0 14px; }
+.ab-chip {
+  min-width: 34px; padding: 4px 10px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+}
+.ab-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ab-track {
+  position: relative; flex: 1; height: 4px; border-radius: 2px;
+  background: var(--bg-sunken); overflow: hidden; min-width: 40px;
+}
+.ab-band { position: absolute; top: 0; bottom: 0; background: var(--accent); border-radius: 2px; opacity: 0.75; }
+.ab-label { font-size: 11px; color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
 .eq-slider {
   -webkit-appearance: none; appearance: none;
   height: 6px; border-radius: 3px; background: var(--bg-sunken);

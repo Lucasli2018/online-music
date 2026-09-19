@@ -829,7 +829,7 @@
       settings: {
         theme: document.documentElement.getAttribute('data-theme'),
         volume: (+$('volume').value) / 100,
-        eq: [+$('eq-low').value, +$('eq-mid').value, +$('eq-high').value]
+        eq: CM.Player.getEQ()
       },
       stats: CM.Player.getStats(),
       progress: CM.Player.getProgress(),
@@ -915,23 +915,160 @@
     if (state.lyricsVisible) syncLyrics(CM.Player.getCurrentTime ? CM.Player.getCurrentTime() : 0);
   }
 
-  /* ---------- EQ ---------- */
-  function loadEQ() {
-    try {
-      var g = JSON.parse(localStorage.getItem('cm-eq') || 'null');
-      if (g && g.length === 3) {
-        $('eq-low').value = g[0]; $('eq-mid').value = g[1]; $('eq-high').value = g[2];
-        applyEQ();
-      }
-    } catch (e) {}
+  /* ---------- 音效：十段均衡器 ---------- */
+  var eqInputs = [];
+  var PRESET_LABELS = { flat: '平坦', pop: '流行', rock: '摇滚', classical: '古典', vocal: '人声', bass: '低音增强' };
+
+  function fmtFreq(f) { return f >= 1000 ? (f / 1000) + 'k' : String(f); }
+
+  function buildEqBand() {
+    var box = $('eq-band');
+    if (!box) return;
+    box.innerHTML = '';
+    eqInputs = [];
+    CM.Player.EQ_FREQS.forEach(function (f, i) {
+      var cell = document.createElement('div');
+      cell.className = 'eq-cell';
+      var gain = document.createElement('span');
+      gain.className = 'eq-gain';
+      gain.textContent = '0';
+      var input = document.createElement('input');
+      input.type = 'range';
+      input.min = '-12'; input.max = '12'; input.step = '1'; input.value = '0';
+      input.className = 'eq-slider-v';
+      input.setAttribute('data-index', String(i));
+      input.setAttribute('aria-label', fmtFreq(f) + ' Hz 增益');
+      input.addEventListener('input', applyEQ);
+      var freq = document.createElement('label');
+      freq.className = 'eq-freq';
+      freq.textContent = fmtFreq(f);
+      cell.appendChild(gain); cell.appendChild(input); cell.appendChild(freq);
+      box.appendChild(cell);
+      eqInputs.push(input);
+    });
   }
+
+  function buildEqPresets() {
+    var box = $('eq-presets');
+    if (!box) return;
+    box.innerHTML = '';
+    Object.keys(CM.Player.EQ_PRESETS).forEach(function (name) {
+      var b = document.createElement('button');
+      b.className = 'chip eq-preset';
+      b.setAttribute('data-preset', name);
+      b.textContent = PRESET_LABELS[name] || name;
+      b.addEventListener('click', function () { applyPreset(name); });
+      box.appendChild(b);
+    });
+  }
+
+  function setEqValues(gains) {
+    if (!eqInputs.length) return;
+    eqInputs.forEach(function (input, i) { input.value = String(gains[i] || 0); });
+  }
+
   function applyEQ() {
-    var g = [+$('eq-low').value, +$('eq-mid').value, +$('eq-high').value];
+    if (!eqInputs.length) return;
+    var g = eqInputs.map(function (input) { return +input.value; });
     CM.Player.setEQ(g);
-    $('eq-low-val').textContent = (g[0] > 0 ? '+' : '') + g[0];
-    $('eq-mid-val').textContent = (g[1] > 0 ? '+' : '') + g[1];
-    $('eq-high-val').textContent = (g[2] > 0 ? '+' : '') + g[2];
+    eqInputs.forEach(function (input) {
+      var v = +input.value;
+      var lab = input.parentNode && input.parentNode.querySelector('.eq-gain');
+      if (lab) {
+        lab.textContent = (v > 0 ? '+' : '') + v;
+        lab.classList.toggle('up', v > 0);
+      }
+    });
     try { localStorage.setItem('cm-eq', JSON.stringify(g)); } catch (e) {}
+    markEqPreset(g);
+  }
+
+  function presetOf(g) {
+    var names = Object.keys(CM.Player.EQ_PRESETS);
+    for (var i = 0; i < names.length; i++) {
+      var p = CM.Player.EQ_PRESETS[names[i]];
+      var same = true;
+      for (var k = 0; k < p.length; k++) { if (p[k] !== g[k]) { same = false; break; } }
+      if (same) return names[i];
+    }
+    return null;
+  }
+
+  function markEqPreset(g) {
+    var name = presetOf(g);
+    document.querySelectorAll('.eq-preset').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-preset') === name);
+    });
+    var cur = $('eq-current');
+    if (cur) cur.textContent = name ? (PRESET_LABELS[name] || name) : '自定义';
+  }
+
+  function applyPreset(name) {
+    var g = CM.Player.EQ_PRESETS[name];
+    if (!g) return;
+    setEqValues(g);
+    applyEQ();
+    toast('音效预设：' + (PRESET_LABELS[name] || name));
+  }
+
+  function loadEQ() {
+    var raw = null;
+    try { raw = JSON.parse(localStorage.getItem('cm-eq') || 'null'); } catch (e) { raw = null; }
+    // 旧版三段数据由 normalizeEQ 映射到十段，升级不清空用户设置
+    var g = CM.Player.normalizeEQ(raw) || CM.Player.EQ_PRESETS.flat.slice();
+    setEqValues(g);
+    applyEQ();
+  }
+
+  /* ---------- 音效：播放引擎开关（交叉淡入淡出 / 响度均衡 / 变速不变调） ---------- */
+  function markCrossfade(v) {
+    var lab = $('fx-crossfade-val');
+    if (lab) lab.textContent = v > 0 ? v + 's' : '关闭';
+  }
+
+  function syncEngineSwitches() {
+    var l = $('fx-loudness'); if (l) l.checked = CM.Player.getLoudness();
+    var p = $('fx-keep-pitch'); if (p) p.checked = CM.Player.getKeepPitch();
+    var r = $('rate-keep-pitch'); if (r) r.checked = CM.Player.getKeepPitch();
+  }
+
+  function initFxUI() {
+    var cf = $('fx-crossfade');
+    if (cf) {
+      var v = CM.Player.getCrossfade();
+      cf.value = String(v);
+      markCrossfade(v);
+    }
+    syncEngineSwitches();
+  }
+
+  function openFx() { initFxUI(); $('fx-modal').classList.remove('hidden'); }
+
+  /* ---------- AB 段循环 ---------- */
+  function updateAbBand(ab) {
+    var band = $('ab-band');
+    if (!band) return;
+    var dur = CM.Player.getActiveDuration();
+    if (!ab.on || !(dur > 0)) { band.classList.add('hidden'); return; }
+    var left = Math.max(0, Math.min(100, (ab.a / dur) * 100));
+    var right = Math.max(left, Math.min(100, (ab.b / dur) * 100));
+    band.classList.remove('hidden');
+    band.style.left = left + '%';
+    band.style.width = (right - left) + '%';
+  }
+
+  function updateAbUI() {
+    var ab = CM.Player.getAb();
+    var a = $('btn-ab-a'), b = $('btn-ab-b'), c = $('btn-ab-clear'), lab = $('ab-label');
+    if (a) a.classList.toggle('active', ab.a != null);
+    if (b) b.classList.toggle('active', ab.b != null);
+    if (c) c.classList.toggle('active', ab.on);
+    if (lab) {
+      if (ab.on) lab.textContent = fmt(ab.a) + ' – ' + fmt(ab.b) + ' 循环中';
+      else if (ab.a != null) lab.textContent = 'A = ' + fmt(ab.a) + '，待设 B';
+      else lab.textContent = 'AB 未设置';
+    }
+    updateAbBand(ab);
   }
 
   /* ---------- 倍速 / 睡眠定时 / 桌面歌词 / 偏移 ---------- */
@@ -1310,7 +1447,7 @@
       settings: {
         theme: document.documentElement.getAttribute('data-theme'),
         volume: (+$('volume').value) / 100,
-        eq: [+$('eq-low').value, +$('eq-mid').value, +$('eq-high').value]
+        eq: CM.Player.getEQ()
       }
     };
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1332,9 +1469,10 @@
       $('volume').value = Math.round(s.volume * 100);
       CM.Player.setVolume(s.volume); saveVolume(s.volume);
     }
-    if (Array.isArray(s.eq) && s.eq.length === 3) {
-      $('eq-low').value = s.eq[0]; $('eq-mid').value = s.eq[1]; $('eq-high').value = s.eq[2];
-      applyEQ();
+    if (s.eq) {
+      // 兼容旧备份：三段数据由 normalizeEQ 映射到十段
+      var g = CM.Player.normalizeEQ(s.eq);
+      if (g) { setEqValues(g); applyEQ(); }
     }
   }
   function importData(file) {
@@ -1387,8 +1525,10 @@
     });
 
     loadLyrics(); loadSettings();
+    buildEqBand(); buildEqPresets();
     loadEQ();
     restorePlaybackPrefs();
+    updateAbUI();
 
     state.currentListId = Lib.getCurrentList();
     var lists = Lib.getLists();
@@ -1413,12 +1553,15 @@
       CM.Queue.setCurrent(CM.Player.getIndex());
       showLyricsFor(track);
       $('btn-play').textContent = '⏸';
+      // AB 段是「针对某一首歌」的选区，换歌后自动清除，避免误导
+      CM.Player.clearAb();
     });
     CM.Player.on('time', function (cur, dur) {
       $('time-current').textContent = fmt(cur);
       $('time-total').textContent = fmt(dur);
       if (dur > 0 && !seeking) $('seek').value = Math.round((cur / dur) * 1000);
       syncLyrics(cur);
+      updateAbBand(CM.Player.getAb());
     });
     CM.Player.on('state', function (playing) {
       $('btn-play').textContent = playing ? '⏸' : '▶';
@@ -1504,7 +1647,7 @@
       // 词按钮 = 在「歌词」与「队列」面板间切换；同步高亮由面板可见性决定
       showSide(state.lyricsVisible ? 'queue' : 'lyrics');
     });
-    $('btn-eq').addEventListener('click', function () { $('eq-modal').classList.remove('hidden'); });
+    $('btn-eq').addEventListener('click', openFx);
     $('btn-queue-tab').addEventListener('click', function () { showSide('queue'); });
 
     $('btn-theme').addEventListener('click', toggleTheme);
@@ -1643,15 +1786,54 @@
     // 队列
     $('btn-queue-clear').addEventListener('click', clearQueue);
 
-    // EQ
-    $('eq-low').addEventListener('input', applyEQ);
-    $('eq-mid').addEventListener('input', applyEQ);
-    $('eq-high').addEventListener('input', applyEQ);
-    $('eq-reset').addEventListener('click', function () {
-      $('eq-low').value = 0; $('eq-mid').value = 0; $('eq-high').value = 0; applyEQ(); toast('EQ 已重置');
+    // 音效：十段 EQ + 播放引擎
+    bindEl('fx-close', 'click', function () { $('fx-modal').classList.add('hidden'); });
+    bindEl('fx-done', 'click', function () { $('fx-modal').classList.add('hidden'); });
+    bindEl('fx-modal', 'click', function (e) { if (e.target === this) this.classList.add('hidden'); });
+    bindEl('fx-reset', 'click', function () {
+      setEqValues(CM.Player.EQ_PRESETS.flat.slice());
+      applyEQ();
+      CM.Player.setCrossfade(0);
+      CM.Player.setLoudness(false);
+      CM.Player.setKeepPitch(true);
+      initFxUI();
+      toast('音效设置已恢复默认');
     });
-    $('eq-close').addEventListener('click', function () { $('eq-modal').classList.add('hidden'); });
-    $('eq-modal').addEventListener('click', function (e) { if (e.target === this) this.classList.add('hidden'); });
+    bindEl('fx-crossfade', 'input', function () {
+      var v = CM.Player.setCrossfade(parseFloat(this.value));
+      markCrossfade(v);
+    });
+    bindEl('fx-loudness', 'change', function () {
+      CM.Player.setLoudness(this.checked);
+      toast(this.checked ? '响度均衡：开（自动补偿音量差异）' : '响度均衡：关');
+    });
+    bindEl('fx-keep-pitch', 'change', function () {
+      CM.Player.setKeepPitch(this.checked);
+      syncEngineSwitches();
+    });
+    bindEl('rate-keep-pitch', 'change', function () {
+      CM.Player.setKeepPitch(this.checked);
+      syncEngineSwitches();
+    });
+
+    // AB 段循环
+    bindEl('btn-ab-a', 'click', function () {
+      if (!CM.Player.getTrack()) { toast('请先播放一首歌'); return; }
+      if (CM.Player.setAbPoint('a')) toast('A 点：' + fmt(CM.Player.getCurrentTime()));
+      updateAbUI();
+    });
+    bindEl('btn-ab-b', 'click', function () {
+      if (!CM.Player.getTrack()) { toast('请先播放一首歌'); return; }
+      if (CM.Player.setAbPoint('b')) toast('B 点：' + fmt(CM.Player.getCurrentTime()) + '，开始 AB 循环');
+      else toast('B 点需要晚于 A 点至少 0.3 秒');
+      updateAbUI();
+    });
+    bindEl('btn-ab-clear', 'click', function () {
+      CM.Player.clearAb();
+      updateAbUI();
+      toast('已清除 AB 循环');
+    });
+    CM.Player.on('ab', updateAbUI);
 
     // 侧栏 tab
     document.querySelectorAll('.panel-tab').forEach(function (t) {

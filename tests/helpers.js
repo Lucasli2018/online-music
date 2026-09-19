@@ -107,6 +107,8 @@ function createAppContext(opts) {
     performance: opts.performance || { now: function () { return Date.now(); } }
   };
   if (opts.MediaMetadata) sandbox.MediaMetadata = opts.MediaMetadata;
+  // Web Audio 替身（响度均衡 / 十段 EQ 的链路断言需要）
+  if (opts.AudioContext) sandbox.AudioContext = opts.AudioContext;
   sandbox.window = sandbox;
   sandbox.self = sandbox;
   sandbox.globalThis = sandbox;
@@ -169,6 +171,55 @@ function mockFetch(routes) {
   return fn;
 }
 
+/* ---------- Web Audio 替身 ----------
+ * 记录被创建的滤波 / 增益节点与连线次数，供十段 EQ 与响度均衡断言使用。
+ * opts.silence = true 时时域数据全为静音（128），用于验证「安静段落不补偿」。
+ */
+function createAudioContextStub(opts) {
+  opts = opts || {};
+  var created = { filters: [], gains: [], sources: 0, analysers: 0, connects: 0 };
+  function param(v) {
+    return {
+      value: v,
+      setTargetAtTime: function (val) { this.value = val; }
+    };
+  }
+  function noop() { created.connects++; }
+  var ctx = {
+    currentTime: 0,
+    state: 'running',
+    destination: { _destination: true },
+    resume: function () { ctx.state = 'running'; },
+    createBiquadFilter: function () {
+      var f = { type: '', frequency: param(0), Q: param(0), gain: param(0), connect: noop };
+      created.filters.push(f);
+      return f;
+    },
+    createGain: function () {
+      var g = { gain: param(1), connect: noop };
+      created.gains.push(g);
+      return g;
+    },
+    createMediaElementSource: function () { created.sources++; return { connect: noop }; },
+    createAnalyser: function () {
+      created.analysers++;
+      return {
+        fftSize: 256,
+        frequencyBinCount: 128,
+        connect: noop,
+        getByteFrequencyData: function (a) { for (var i = 0; i < a.length; i++) a[i] = 0; },
+        getByteTimeDomainData: function (a) {
+          for (var i = 0; i < a.length; i++) {
+            a[i] = opts.silence ? 128 : (i % 2 ? 160 : 96);   // 交替 ±0.25 → RMS ≈ 0.25
+          }
+        }
+      };
+    }
+  };
+  ctx._created = created;
+  return ctx;
+}
+
 /* 跨沙箱深比较：vm 上下文里造出来的数组/对象与宿主原型不同，
  * assert.deepStrictEqual 会因「非引用相等」失败，故先用 JSON 归一化再比。 */
 function plain(v) {
@@ -184,6 +235,7 @@ module.exports = {
   uniqSorted: uniqSorted,
   createStorage: createStorage,
   createAudioStub: createAudioStub,
+  createAudioContextStub: createAudioContextStub,
   createMediaSessionStub: createMediaSessionStub,
   createMediaMetadataStub: createMediaMetadataStub,
   createAppContext: createAppContext,

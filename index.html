@@ -35,7 +35,7 @@
       <button id="btn-load-samples" class="btn" title="载入内置示例曲">🎵 示例曲</button>
       <button id="btn-export" class="btn" title="导出歌单/远程歌曲/歌词为 JSON 备份">⤓ 备份</button>
       <button id="btn-import" class="btn" title="从 JSON 备份恢复歌单">⤒ 恢复</button>
-      <button id="btn-eq" class="btn" title="均衡器（本地 / 云端 / 代理播放的歌曲生效）">🎚 EQ</button>
+      <button id="btn-eq" class="btn" title="音效：十段均衡器 / 交叉淡入淡出 / 响度均衡 / 变速不变调">🎛 音效</button>
       <button id="btn-stats" class="btn" title="播放统计：曲库概况、来源分布、播放排行">📊 统计</button>
       <button id="btn-cloud" class="btn" title="云端：把歌曲与歌单存到 Cloudflare R2，换设备也能听">☁️ 云端</button>
       <button id="btn-rate" class="btn" title="倍速播放">⏩ 倍速</button>
@@ -83,6 +83,15 @@
         <span id="time-current" class="time">0:00</span>
         <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" />
         <span id="time-total" class="time">0:00</span>
+      </div>
+
+      <!-- AB 段循环（练歌 / 精听） -->
+      <div class="ab-row">
+        <button id="btn-ab-a" class="chip ab-chip" title="把当前播放位置设为 A 点（循环起点）">A</button>
+        <button id="btn-ab-b" class="chip ab-chip" title="把当前播放位置设为 B 点（循环终点，自动开始循环）">B</button>
+        <button id="btn-ab-clear" class="chip ab-chip" title="清除 AB 循环">✕</button>
+        <div class="ab-track"><div id="ab-band" class="ab-band hidden"></div></div>
+        <span id="ab-label" class="ab-label">AB 未设置</span>
       </div>
 
       <div class="controls">
@@ -216,19 +225,46 @@
     </div>
   </div>
 
-  <!-- EQ 弹窗 -->
-  <div id="eq-modal" class="modal hidden">
-    <div class="modal-card">
-      <h3>均衡器（仅本地歌曲生效）</h3>
-      <label>低频 <span id="eq-low-val" class="eq-val">0</span> dB</label>
-      <input id="eq-low" class="eq-slider" type="range" min="-12" max="12" value="0" step="1" />
-      <label>中频 <span id="eq-mid-val" class="eq-val">0</span> dB</label>
-      <input id="eq-mid" class="eq-slider" type="range" min="-12" max="12" value="0" step="1" />
-      <label>高频 <span id="eq-high-val" class="eq-val">0</span> dB</label>
-      <input id="eq-high" class="eq-slider" type="range" min="-12" max="12" value="0" step="1" />
+  <!-- 音效弹窗（十段均衡器 + 播放引擎） -->
+  <div id="fx-modal" class="modal hidden">
+    <div class="modal-card fx-card">
+      <div class="online-head">
+        <h3>音效</h3>
+        <div class="online-head-actions">
+          <button id="fx-close" class="online-icon-btn" title="关闭">✕</button>
+        </div>
+      </div>
+
+      <div class="fx-section">
+        <div class="fx-section-head">
+          <span class="fx-title">均衡器 · 十段</span>
+          <span id="eq-current" class="fx-val">平坦</span>
+        </div>
+        <div id="eq-presets" class="eq-presets"></div>
+        <div id="eq-band" class="eq-band"></div>
+      </div>
+
+      <div class="fx-section">
+        <div class="fx-title">播放引擎</div>
+        <label class="fx-row" title="播放到接近结尾时，新旧两首交叠渐变的时长；手动切歌始终即时切换">
+          <span class="fx-row-label">交叉淡入淡出</span>
+          <input id="fx-crossfade" type="range" min="0" max="8" step="0.5" value="0" />
+          <span id="fx-crossfade-val" class="fx-val">关闭</span>
+        </label>
+        <label class="fx-row fx-switch" title="自动补偿不同歌曲之间的响度差异，避免一首吵一首轻">
+          <input id="fx-loudness" type="checkbox" />
+          <span>响度均衡（自动补偿歌曲间音量差异）</span>
+        </label>
+        <label class="fx-row fx-switch" title="倍速播放时保持音高不变（关闭后会像磁带快放一样变调）">
+          <input id="fx-keep-pitch" type="checkbox" />
+          <span>变速不变调（倍速时保持音高）</span>
+        </label>
+        <p class="fx-hint">均衡器与响度均衡仅对本地 / 云端 / 代理（同源）音频生效；跨域直链受浏览器限制无法接入音频处理链，会自动直连播放。</p>
+      </div>
+
       <div class="modal-actions">
-        <button id="eq-reset" class="btn">重置</button>
-        <button id="eq-close" class="btn btn-primary">完成</button>
+        <button id="fx-reset" class="btn">恢复默认</button>
+        <button id="fx-done" class="btn btn-primary">完成</button>
       </div>
     </div>
   </div>
@@ -295,6 +331,10 @@
         <button class="rate-opt" data-rate="1.5">1.5x</button>
         <button class="rate-opt" data-rate="2">2.0x</button>
       </div>
+      <label class="fx-row fx-switch rate-pitch" title="倍速播放时保持音高不变">
+        <input id="rate-keep-pitch" type="checkbox" />
+        <span>变速不变调（保持音高）</span>
+      </label>
       <div class="modal-actions">
         <button id="rate-close" class="btn btn-primary">完成</button>
       </div>
