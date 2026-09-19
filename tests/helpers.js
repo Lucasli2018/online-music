@@ -97,6 +97,10 @@ function createAppContext(opts) {
     },
     cancelAnimationFrame: function () {},
     fetch: opts.fetch || function () { return Promise.reject(new Error('测试环境未启用 fetch')); },
+    // 浏览器内建类：cloud.js 上传时会构造 FormData
+    FormData: typeof FormData === 'function' ? FormData : undefined,
+    Blob: typeof Blob === 'function' ? Blob : undefined,
+    File: typeof File === 'function' ? File : undefined,
     Audio: opts.Audio || createAudioStub,
     localStorage: opts.storage || createStorage(),
     navigator: opts.navigator || {},
@@ -127,9 +131,11 @@ function loadCM(names, opts) {
 }
 
 /* ---------- fetch 路由替身 ---------- */
-function jsonResponse(obj) {
+function jsonResponse(obj, status) {
+  status = status || 200;
   return {
-    ok: true, status: 200,
+    ok: status >= 200 && status < 300,
+    status: status,
     json: function () { return Promise.resolve(obj); },
     text: function () { return Promise.resolve(JSON.stringify(obj)); }
   };

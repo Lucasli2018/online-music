@@ -235,7 +235,31 @@ function check(name, ok, extra) {
     check('切到「最近」后只显示听过的曲目', recentTracks,
       '曲目数=' + (await evalJS('document.querySelectorAll("#playlist li.track").length')));
 
-    // 9. 无控制台错误
+    // 9. 云面板：绑定生效 + 无 Functions 环境下正确降级
+    check('顶栏存在「☁️ 云端」按钮', await evalJS('!!document.getElementById("btn-cloud")'));
+    await clickSel('#btn-cloud');
+    check('点击后云端弹窗打开', await waitFor('!document.getElementById("cloud-modal").classList.contains("hidden")'));
+    var noPass = await evalJS('document.getElementById("cloud-status").textContent');
+    check('未设置口令时给出引导文案', /口令/.test(noPass), noPass);
+
+    await evalJS('(function(){document.getElementById("cloud-pass").value="short";})()');
+    await clickSel('#cloud-pass-save');
+    await sleep(200);
+    var shortMsg = await evalJS('document.getElementById("cloud-status").textContent');
+    check('口令过短时拒绝保存并提示', /10 位/.test(shortMsg), shortMsg);
+
+    await evalJS('(function(){document.getElementById("cloud-pass").value="probe-pass-2026";})()');
+    await clickSel('#cloud-pass-save');
+    var degraded = await waitFor(
+      '(function(){var t=document.getElementById("cloud-status").textContent;return t.indexOf("不可用")>=0||t.indexOf("失败")>=0;})()', 6000);
+    var degradeMsg = await evalJS('document.getElementById("cloud-status").textContent');
+    check('本地无 Functions 时给出降级提示（不静默失败）', degraded, degradeMsg);
+    check('降级提示说明了原因', /api|Pages/.test(degradeMsg), degradeMsg);
+
+    await clickSel('#cloud-close');
+    check('云端弹窗可关闭', await waitFor('document.getElementById("cloud-modal").classList.contains("hidden")'));
+
+    // 10. 无控制台错误
     var errs = await evalJS('JSON.stringify(window.__probeErrors || [])');
     check('页面运行期间无未捕获错误', errs === '[]', errs);
   } catch (e) {

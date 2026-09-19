@@ -4,7 +4,7 @@
  *       用户端出现「HTML 是新版、JS 是旧版」——新按钮存在但没绑定、点击无反应。
  * 不接管音频：本地歌走 IndexedDB（不经网络），远程 / 在线音频跨域不拦截。
  */
-const CACHE = 'coral-music-v5';
+const CACHE = 'coral-music-v6';
 const SHELL = [
   './',
   './index.html',
@@ -20,6 +20,7 @@ const SHELL = [
   './js/visualizer.js',
   './js/id3.js',
   './js/library.js',
+  './js/cloud.js',
   './js/player.js',
   './js/playlist.js',
   './js/queue.js',
@@ -53,12 +54,17 @@ self.addEventListener('fetch', function (e) {
   var url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // 跨域（远程 / 在线音频等）不接管
 
+  // /api/* 一律交给浏览器直连，SW 不介入：
+  //   · 云端音频 / 代理音频会用 Range 请求，返回 206 —— Cache API 不接受 206，put 会抛错
+  //   · 音频体量大，塞进 Cache Storage 既占用户磁盘也无意义（服务端已给 immutable 缓存头）
+  if (url.pathname.indexOf('/api/') === 0) return;
+
   // 同源资源：network-first（拿最新），离线才回退缓存
   e.respondWith(
     fetch(req).then(function (res) {
       if (res && res.ok) {
         var copy = res.clone();
-        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+        caches.open(CACHE).then(function (c) { return c.put(req, copy); }).catch(function () {});
       }
       return res;
     }).catch(function () {

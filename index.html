@@ -35,8 +35,9 @@
       <button id="btn-load-samples" class="btn" title="载入内置示例曲">🎵 示例曲</button>
       <button id="btn-export" class="btn" title="导出歌单/远程歌曲/歌词为 JSON 备份">⤓ 备份</button>
       <button id="btn-import" class="btn" title="从 JSON 备份恢复歌单">⤒ 恢复</button>
-      <button id="btn-eq" class="btn" title="均衡器（仅本地歌曲生效）">🎚 EQ</button>
+      <button id="btn-eq" class="btn" title="均衡器（本地 / 云端 / 代理播放的歌曲生效）">🎚 EQ</button>
       <button id="btn-stats" class="btn" title="播放统计：曲库概况、来源分布、播放排行">📊 统计</button>
+      <button id="btn-cloud" class="btn" title="云端：把歌曲与歌单存到 Cloudflare R2，换设备也能听">☁️ 云端</button>
       <button id="btn-rate" class="btn" title="倍速播放">⏩ 倍速</button>
       <button id="btn-sleep" class="btn" title="睡眠定时">⏲ 定时</button>
       <button id="btn-desktop-lyrics" class="btn" title="桌面浮动歌词">🖥 桌面词</button>
@@ -246,6 +247,42 @@
     </div>
   </div>
 
+  <!-- 云端弹窗（Cloudflare Pages Functions + R2） -->
+  <div id="cloud-modal" class="modal hidden">
+    <div class="modal-card cloud-card">
+      <div class="online-head">
+        <h3>云端 · R2</h3>
+        <div class="online-head-actions">
+          <button id="cloud-refresh" class="online-icon-btn" title="刷新云端曲库">↻</button>
+          <button id="cloud-close" class="online-icon-btn" title="关闭">✕</button>
+        </div>
+      </div>
+
+      <div class="cloud-pass">
+        <label for="cloud-pass">同步口令（至少 10 位）</label>
+        <div class="cloud-pass-row">
+          <input id="cloud-pass" type="password" placeholder="输入口令，例如 coral-2026-abc" autocomplete="new-password" />
+          <button id="cloud-pass-gen" class="chip" title="生成一个随机口令">🎲</button>
+          <button id="cloud-pass-save" class="btn btn-primary">保存</button>
+        </div>
+        <div class="cloud-meta">
+          <label class="cloud-show"><input id="cloud-pass-show" type="checkbox" /> 显示口令</label>
+          <span id="cloud-space" class="cloud-space">未连接</span>
+        </div>
+        <p class="cloud-hint">口令即密钥：服务端只保存由它派生出的空间标识，不保存口令本身；<b>忘记口令等于云端数据无法再取回</b>。换设备时输入同一口令即可看到同一份云端曲库。</p>
+      </div>
+
+      <div class="cloud-actions">
+        <button id="cloud-upload-all" class="btn">⤴ 本地歌曲上传到云端</button>
+        <button id="cloud-sync-up" class="btn">⤒ 歌单与设置存到云端</button>
+        <button id="cloud-sync-down" class="btn">⤓ 从云端恢复</button>
+      </div>
+
+      <p id="cloud-status" class="online-status"></p>
+      <div id="cloud-list" class="cloud-list"></div>
+    </div>
+  </div>
+
   <!-- 倍速弹窗 -->
   <div id="rate-modal" class="modal hidden">
     <div class="modal-card">
@@ -295,6 +332,7 @@
   <script src="js/visualizer.js"></script>
   <script src="js/id3.js"></script>
   <script src="js/library.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/player.js"></script>
   <script src="js/playlist.js"></script>
   <script src="js/queue.js"></script>

@@ -1,0 +1,8 @@
+# 本地开发产物（wrangler pages dev 生成的运行时状态与缓存，含本地模拟 R2 数据）
+.wrangler/
+
+# 依赖与系统文件
+node_modules/
+.DS_Store
+Thumbs.db
+*.log

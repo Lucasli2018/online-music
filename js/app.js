@@ -79,7 +79,9 @@
     Lib.addTrack(Object.assign({}, s, { cover: s.cover || pickCover(s.id) }));
   }
   function persistRemote() {
-    Lib.saveRemote(Lib.allTracks().filter(function (t) { return t.source === 'remote' || t.source === 'online'; }));
+    Lib.saveRemote(Lib.allTracks().filter(function (t) {
+      return t.source === 'remote' || t.source === 'online' || t.source === 'cloud';
+    }));
   }
   function buildLibrary() {
     return CM.Storage.getAll().then(onLocalLoaded, function () { onLocalLoaded([]); });
@@ -207,10 +209,16 @@
   /* ---------- 播放 / 队列 ---------- */
   function playFromTrack(track) {
     var vis = getVisibleTracks();
-    CM.Player.setPlaylist(vis);
     var i = -1;
     for (var k = 0; k < vis.length; k++) { if (vis[k].id === track.id) { i = k; break; } }
-    if (i < 0) i = 0;
+    if (i < 0) {
+      // 不在当前视图里（例如刚从云端加入的歌）：以它自己为单曲队列播放，避免误播第一首
+      CM.Player.setPlaylist([track]);
+      CM.Player.loadIndex(0, true);
+      renderQueue();
+      return;
+    }
+    CM.Player.setPlaylist(vis);
     CM.Player.loadIndex(i, true);
     renderQueue();
   }
@@ -604,6 +612,284 @@
   }
 
   function openStats() { renderStats(); $('stats-modal').classList.remove('hidden'); }
+
+  /* ---------- 云端（Cloudflare Pages Functions + R2） ---------- */
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+  function cloudStatus(msg, isErr) {
+    var bar = $('cloud-status');
+    if (!bar) return;
+    bar.textContent = msg || '';
+    bar.classList.toggle('cloud-err', !!isErr);
+  }
+  // 把云端失败翻译成「下一步该做什么」，避免只甩一个 HTTP 状态码
+  function cloudHintFor(e) {
+    var status = e && e.status;
+    if (status === 404) return '（本地静态服务器没有 /api 端点，需部署到 Cloudflare Pages）';
+    if (status === 401) return '（口令不合法，需 ≥10 位）';
+    if (status === 503) return '（云端 R2 绑定未生效，检查 Pages 项目的 MUSIC_BUCKET 绑定）';
+    if (status === 413) return '（文件超出单次上传上限）';
+    if (!status) return '（网络不可达或不是 Pages 环境）';
+    return '';
+  }
+  function cloudSpaceLabel() {
+    var lbl = $('cloud-space');
+    if (!lbl) return;
+    if (!CM.Cloud.hasPass()) { lbl.textContent = '未设置口令'; return; }
+    var slug = CM.Cloud.getSlug();
+    var last = CM.Cloud.getLastSync();
+    lbl.textContent = '空间 ' + (slug ? slug.slice(0, 8) + '…' : '（待连接）') +
+      (last ? ' · 上次同步 ' + new Date(last).toLocaleString() : '');
+  }
+
+  function openCloud() {
+    $('cloud-modal').classList.remove('hidden');
+    var input = $('cloud-pass');
+    if (input && !input.value) input.value = CM.Cloud.getPass();
+    cloudSpaceLabel();
+    if (!CM.Cloud.hasPass()) { cloudStatus('先设置口令（≥10 位），点「保存」连接云端'); return; }
+    cloudStatus('正在连接云端…');
+    CM.Cloud.ping().then(function (d) {
+      if (!d.ok) { cloudStatus('云端未就绪：' + (d.reason || 'R2 绑定不可用'), true); return; }
+      cloudStatus('已连接 · 云端曲目 ' + (d.cloudTracks || 0) + ' 首');
+      cloudSpaceLabel();
+      return cloudRefreshList();
+    }).catch(function (e) {
+      cloudStatus('云端不可用：' + e.message + cloudHintFor(e), true);
+    });
+  }
+  function closeCloud() { $('cloud-modal').classList.add('hidden'); }
+
+  function cloudSavePass() {
+    var v = ($('cloud-pass').value || '').trim();
+    var problem = CM.Cloud.passProblem(v);
+    if (problem) { cloudStatus(problem, true); toast(problem); return; }
+    CM.Cloud.setPass(v);
+    cloudSpaceLabel();
+    cloudStatus('口令已保存，正在连接…');
+    CM.Cloud.ping().then(function (d) {
+      if (!d.ok) { cloudStatus('云端未就绪：' + (d.reason || 'R2 绑定不可用'), true); return; }
+      cloudStatus('已连接 · 云端曲目 ' + (d.cloudTracks || 0) + ' 首');
+      cloudSpaceLabel();
+      return cloudRefreshList();
+    }).catch(function (e) {
+      cloudStatus('连接失败：' + e.message + cloudHintFor(e), true);
+    });
+  }
+
+  function cloudGenPass() {
+    $('cloud-pass').value = CM.Cloud.randomPass();
+    $('cloud-pass').type = 'text';
+    $('cloud-pass-show').checked = true;
+    toast('已生成随机口令，请抄下来保存');
+  }
+
+  function cloudRefreshList() {
+    if (!CM.Cloud.hasPass()) return Promise.resolve();
+    cloudStatus('正在读取云端曲库…');
+    return CM.Cloud.listCloud().then(function (d) {
+      renderCloudList((d && d.items) || []);
+      cloudStatus('云端曲库 ' + ((d && d.count) || 0) + ' 首' + (d && d.truncated ? '（仅显示前 1000 首）' : ''));
+      cloudSpaceLabel();
+    }).catch(function (e) {
+      cloudStatus('读取失败：' + e.message + cloudHintFor(e), true);
+    });
+  }
+
+  function renderCloudList(items) {
+    var box = $('cloud-list');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!items.length) {
+      var hint = document.createElement('p');
+      hint.className = 'empty-hint';
+      hint.textContent = CM.Cloud.hasPass()
+        ? '云端还没有歌曲。点上方「⤴ 本地歌曲上传到云端」把本机上传输的音频传上去。'
+        : '先设置口令。';
+      box.appendChild(hint);
+      return;
+    }
+    items.sort(function (a, b) { return (b.uploaded || 0) - (a.uploaded || 0); });
+    items.forEach(function (it) {
+      var row = document.createElement('div');
+      row.className = 'cloud-item';
+
+      var info = document.createElement('div');
+      info.className = 'cloud-item-info';
+      var title = document.createElement('div');
+      title.className = 'cloud-item-title';
+      title.textContent = it.title || it.id;
+      var sub = document.createElement('div');
+      sub.className = 'cloud-item-sub';
+      sub.textContent = (it.artist ? it.artist + ' · ' : '') + fmtSize(it.size) + (it.ext ? ' · ' + it.ext : '');
+      info.appendChild(title); info.appendChild(sub);
+
+      var playBtn = document.createElement('button');
+      playBtn.className = 'chip'; playBtn.title = '播放'; playBtn.textContent = '▶';
+      playBtn.addEventListener('click', function () { playCloudItem(it); });
+
+      var addBtn = document.createElement('button');
+      addBtn.className = 'chip'; addBtn.title = '加入曲库'; addBtn.textContent = '＋';
+      addBtn.addEventListener('click', function () { addCloudTrack(it, false); });
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'chip'; delBtn.title = '从云端删除'; delBtn.textContent = '🗑';
+      delBtn.addEventListener('click', function () {
+        if (!global.confirm('从云端删除「' + (it.title || it.id) + '」？此操作不可恢复。')) return;
+        CM.Cloud.removeCloud(it.id).then(function () {
+          toast('已从云端删除');
+          cloudRefreshList();
+        }).catch(function (e) { cloudStatus('删除失败：' + e.message, true); });
+      });
+
+      row.appendChild(info); row.appendChild(playBtn); row.appendChild(addBtn); row.appendChild(delBtn);
+      box.appendChild(row);
+    });
+  }
+
+  function cloudRecordOf(item) {
+    return {
+      id: 'cloud-' + item.id,
+      title: item.title || item.id,
+      artist: item.artist || '云端',
+      url: CM.Cloud.playUrl(item.id),
+      cover: pickCover('cloud-' + item.id),
+      album: '',
+      duration: 0,
+      source: 'cloud',
+      cloudId: item.id,
+      addedAt: Date.now()
+    };
+  }
+  function addCloudTrack(item, play) {
+    var rec = Lib.get('cloud-' + item.id) || cloudRecordOf(item);
+    Lib.addTrack(rec);
+    persistRemote();
+    renderLibrary(); renderTabs(); renderQueue();
+    toast('已加入曲库：' + rec.title);
+    if (play) playFromTrack(rec);
+    return rec;
+  }
+  function playCloudItem(item) {
+    var rec = Lib.get('cloud-' + item.id);
+    if (!rec) rec = addCloudTrack(item, false);
+    playFromTrack(rec);
+  }
+
+  function cloudUploadAll() {
+    if (!CM.Cloud.hasPass()) { toast('请先设置并保存口令'); return; }
+    var locals = Lib.allTracks().filter(function (t) { return t.source === 'local' && t.file; });
+    if (!locals.length) { toast('没有可上传的本地歌曲（只有本机上传输的音频能传到云端）'); return; }
+    if (!global.confirm('将 ' + locals.length + ' 首本地歌曲上传到云端？大文件较慢，请保持页面打开。')) return;
+
+    var i = 0, ok = 0, fail = 0;
+    cloudStatus('上传中… 0/' + locals.length);
+    (function next() {
+      if (i >= locals.length) {
+        cloudStatus('上传完成：成功 ' + ok + ' 首' + (fail ? '，失败 ' + fail + ' 首' : ''));
+        toast('云端上传完成：' + ok + ' 首');
+        cloudRefreshList();
+        return;
+      }
+      var t = locals[i++];
+      CM.Cloud.uploadFile(t.file, { id: t.id, title: t.title, artist: t.artist })
+        .then(function () { ok++; })
+        .catch(function () { fail++; })
+        .then(function () {
+          cloudStatus('上传中… ' + i + '/' + locals.length);
+          next();
+        });
+    })();
+  }
+
+  function collectCloudState() {
+    var lists = Lib.getLists();
+    return {
+      lists: Object.keys(lists).map(function (k) {
+        return { id: k, name: lists[k].name, ids: (lists[k].ids || []).slice() };
+      }),
+      remote: Lib.allTracks().filter(function (t) {
+        return t.source === 'remote' || t.source === 'online' || t.source === 'cloud';
+      }).map(function (t) {
+        var o = {
+          id: t.id, title: t.title, artist: t.artist, url: t.url,
+          cover: t.cover, album: t.album, duration: t.duration,
+          source: t.source, addedAt: t.addedAt
+        };
+        ['sid', 'oid', 'lid', 'lsrc', 'pid', 'gsub', 'cloudId', 'preview'].forEach(function (k) {
+          if (t[k] !== undefined) o[k] = t[k];
+        });
+        return o;
+      }),
+      lyrics: state.lyrics,
+      settings: {
+        theme: document.documentElement.getAttribute('data-theme'),
+        volume: (+$('volume').value) / 100,
+        eq: [+$('eq-low').value, +$('eq-mid').value, +$('eq-high').value]
+      },
+      stats: CM.Player.getStats(),
+      progress: CM.Player.getProgress(),
+      device: (global.navigator && navigator.userAgent ? navigator.userAgent : '').slice(0, 60),
+      updatedAt: Date.now()
+    };
+  }
+
+  function applyCloudState(st) {
+    var listCount = 0;
+    if (Array.isArray(st.lists) && st.lists.length) {
+      var merged = {};
+      st.lists.forEach(function (l) {
+        if (!l || !l.id) return;
+        merged[l.id] = { name: l.name || l.id, ids: Array.isArray(l.ids) ? l.ids : [] };
+      });
+      Lib.setLists(merged);
+      listCount = Object.keys(merged).length;
+    }
+    if (Array.isArray(st.remote) && st.remote.length) {
+      st.remote.forEach(function (t) { if (t && t.id) Lib.addTrack(t); });
+      persistRemote();
+    }
+    if (st.lyrics && typeof st.lyrics === 'object') {
+      Object.keys(st.lyrics).forEach(function (k) { state.lyrics[k] = st.lyrics[k]; });
+      saveLyrics();
+    }
+    if (st.stats && CM.Player.setStats) CM.Player.setStats(st.stats);
+    if (st.progress && CM.Player.setProgress) CM.Player.setProgress(st.progress);
+    if (st.settings) applySettings(st.settings);
+    return listCount;
+  }
+
+  function cloudSyncUp() {
+    if (!CM.Cloud.hasPass()) { toast('请先设置并保存口令'); return; }
+    cloudStatus('正在上传歌单与设置…');
+    CM.Cloud.pushState(collectCloudState()).then(function (d) {
+      var kb = Math.max(1, Math.round(((d && d.bytes) || 0) / 1024));
+      cloudStatus('已存到云端（' + kb + ' KB）· ' + new Date().toLocaleString());
+      cloudSpaceLabel();
+      toast('歌单与设置已存到云端');
+    }).catch(function (e) {
+      cloudStatus('保存失败：' + e.message + cloudHintFor(e), true);
+    });
+  }
+
+  function cloudSyncDown() {
+    if (!CM.Cloud.hasPass()) { toast('请先设置并保存口令'); return; }
+    if (!global.confirm('从云端恢复会把云端的歌单 / 远程曲目 / 歌词 / 设置合并到本机（本地上传的音频文件不受影响），继续？')) return;
+    cloudStatus('正在读取云端备份…');
+    CM.Cloud.pullState().then(function (d) {
+      if (!d || d.empty || !d.state) { cloudStatus('云端还没有备份，先点「⤒ 歌单与设置存到云端」'); return; }
+      var n = applyCloudState(d.state);
+      renderLibrary(); renderTabs(); renderQueue();
+      cloudStatus('已从云端恢复（' + n + ' 个歌单）· ' + new Date(d.updatedAt).toLocaleString());
+      toast('已从云端恢复');
+    }).catch(function (e) {
+      cloudStatus('恢复失败：' + e.message + cloudHintFor(e), true);
+    });
+  }
 
   /* ---------- 主题 ---------- */
   function toggleTheme() {
@@ -1316,6 +1602,21 @@
       if (isVirtualList(state.currentListId)) renderLibrary();
       else renderTabs();
     });
+
+    // 云端（R2）
+    bindEl('btn-cloud', 'click', openCloud);
+    bindEl('cloud-close', 'click', closeCloud);
+    bindEl('cloud-modal', 'click', function (e) { if (e.target === this) closeCloud(); });
+    bindEl('cloud-pass-save', 'click', cloudSavePass);
+    bindEl('cloud-pass-gen', 'click', cloudGenPass);
+    bindEl('cloud-pass-show', 'change', function () {
+      $('cloud-pass').type = this.checked ? 'text' : 'password';
+    });
+    bindEl('cloud-pass', 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); cloudSavePass(); } });
+    bindEl('cloud-refresh', 'click', cloudRefreshList);
+    bindEl('cloud-upload-all', 'click', cloudUploadAll);
+    bindEl('cloud-sync-up', 'click', cloudSyncUp);
+    bindEl('cloud-sync-down', 'click', cloudSyncDown);
 
     $('btn-load-samples').addEventListener('click', function () {
       var have = {};

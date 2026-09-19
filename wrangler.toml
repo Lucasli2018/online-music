@@ -1,3 +1,12 @@
-name = "coral-music"
-compatibility_date = "2024-09-18"
+name = "online-music"
+compatibility_date = "2026-09-18"
 pages_build_output_dir = "."
+
+# R2 绑定声明
+# 线上生效的那份配置在 Pages 项目里：Settings → Functions → R2 bucket bindings
+#   MUSIC_BUCKET → music-audio
+# 在这里再声明一次，是为了让 `wrangler pages dev .` 本地开发时也能拿到同一个绑定，
+# 否则本地跑起来 Functions 里 env.MUSIC_BUCKET 会是 undefined。
+[[r2_buckets]]
+binding = "MUSIC_BUCKET"
+bucket_name = "music-audio"

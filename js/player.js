@@ -58,6 +58,24 @@
   }
   function revokeUrl(id) { if (urlCache[id]) { global.URL.revokeObjectURL(urlCache[id]); delete urlCache[id]; } }
 
+  // 能否接入 Web Audio 分析链路（决定可视化有没有真频谱、EQ 是否生效）：
+  //   · 本地 blob：同源
+  //   · 云端 R2（/api/audio/...）与在线代理（/api/proxy?...）：站内相对路径，同源
+  // 跨域远程音频若接入 MediaElementSource 会被浏览器静音，只能用独立元素直接播放。
+  function isAnalysable(track) {
+    if (!track) return false;
+    if (track.source === 'local') return true;
+    var u = track.url || '';
+    if (!u) return false;
+    if (u.charAt(0) === '/') return true;
+    if (u.indexOf('blob:') === 0) return true;
+    try {
+      var base = (global.location && global.location.href) || '';
+      if (!base) return false;
+      return new URL(u, base).origin === new URL(base).origin;
+    } catch (e) { return false; }
+  }
+
   function bind(el) {
     el.addEventListener('timeupdate', function () {
       if (el === active && playlist[index]) saveProgress(playlist[index], el.currentTime);
@@ -178,7 +196,7 @@
     }
     index = i;
     var track = playlist[i];
-    var isLocal = track.source === 'local';
+    var isLocal = isAnalysable(track);   // 本地 / 云端 / 代理音频都同源，可接入分析链
     active = isLocal ? audioLocal : audioRemote;
     (isLocal ? audioRemote : audioLocal).pause();
     active.volume = 0;                                        // 准备淡入
@@ -337,9 +355,18 @@
     getTrack: function () { return playlist[index]; },
     revokeUrl: revokeUrl,
     clearProgress: clearProgress,
+    getProgress: function () { return progress; },
+    setProgress: function (p) {
+      progress = (p && typeof p === 'object') ? p : {};
+      try { localStorage.setItem('cm-progress', JSON.stringify(progress)); } catch (e) {}
+    },
     getStats: function () { return stats; },
     getStat: function (id) { return stats[id] || null; },
     clearStats: function () { stats = {}; saveStats(); },
+    setStats: function (s) {
+      stats = (s && typeof s === 'object') ? s : {};
+      saveStats();
+    },
     queuePush: function (track) { if (track) playlist.push(track); },
     queueInsertNext: function (track) {
       if (!track) return;
