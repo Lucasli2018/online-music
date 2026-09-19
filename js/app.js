@@ -50,9 +50,9 @@
   function readText(file) {
     return new Promise(function (resolve, reject) {
       var r = new FileReader();
-      r.onload = function () { resolve(r.result); };
+      r.onload = function () { resolve(CM.Lyrics.decode(r.result)); };
       r.onerror = function () { reject(r.error); };
-      r.readAsText(file);
+      r.readAsArrayBuffer(file);
     });
   }
   function baseNameOf(n) { return n.replace(/\.[^.]+$/, ''); }
@@ -359,7 +359,8 @@
       toast('已添加：' + rec.title);
     }
     if (lrcUrl) {
-      fetch(lrcUrl).then(function (r) { return r.text(); }).then(function (txt) {
+      fetch(lrcUrl).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+        var txt = CM.Lyrics.decode(buf);
         state.lyrics[id] = txt; saveLyrics(); rec.lrc = txt; finish();
       }).catch(function () { toast('歌词获取失败，仅添加歌曲'); finish(); });
     } else finish();

@@ -51,6 +51,20 @@
     return ans;
   }
 
+  // 按字节猜测文本编码并解码，解决中文 LRC 乱码。
+  // 常见情形：Windows 下导出的 .lrc 多为 GBK / GB2312，被当 UTF-8 读取会乱码。
+  function decode(buf) {
+    var u8 = new Uint8Array(buf);
+    var start = (u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xBF) ? 3 : 0; // 去除 UTF-8 BOM
+    var slice = u8.subarray(start);
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(slice); // 先严格尝试 UTF-8
+    } catch (e) {
+      try { return new TextDecoder('gbk').decode(slice); }            // 失败再按 GBK / GB2312
+      catch (e2) { return new TextDecoder('utf-8').decode(slice); }   // 兜底（容错）
+    }
+  }
+
   global.CM = global.CM || {};
-  global.CM.Lyrics = { parse: parse, activeIndex: activeIndex };
+  global.CM.Lyrics = { parse: parse, activeIndex: activeIndex, decode: decode };
 })(window);
