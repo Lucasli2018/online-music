@@ -254,10 +254,11 @@ body {
 
 /* ---------- 歌词 ---------- */
 .lyrics-panel { max-height: 78vh; display: flex; flex-direction: column; }
-.lyrics { flex: 1; overflow-y: auto; max-height: 64vh; text-align: center; line-height: 2.4; padding: 6px; }
-.lyrics p { color: var(--text-dim); font-size: 15px; transition: color 0.2s, transform 0.2s; cursor: pointer; }
+/* 字号与行距由 --lyric-size / --lyric-lh 驱动（5F：可在歌词面板用 A－ / A＋ 调节） */
+.lyrics { flex: 1; overflow-y: auto; max-height: 64vh; text-align: center; line-height: var(--lyric-lh, 2.4); padding: 6px; }
+.lyrics p { color: var(--text-dim); font-size: var(--lyric-size, 15px); transition: color 0.2s, transform 0.2s; cursor: pointer; }
 .lyrics p:hover { color: var(--text); }
-.lyrics p.active { color: var(--accent); font-weight: 700; font-size: 17px; transform: scale(1.04); }
+.lyrics p.active { color: var(--accent); font-weight: 700; font-size: calc(var(--lyric-size, 15px) * 1.12); transform: scale(1.04); }
 .lyrics-empty { color: var(--text-dim); }
 
 /* ---------- 弹窗 ---------- */
@@ -513,7 +514,7 @@ body {
 .lyrics p.active .w:not(.sung) { color: var(--text-dim); opacity: 0.5; }
 .lyrics p.active .w.sung { color: var(--accent); }
 .lyrics p .lyric-sub {
-  display: block; margin-top: 3px; font-size: 12px; font-weight: 400;
+  display: block; margin-top: 3px; font-size: calc(var(--lyric-size, 15px) * 0.78); font-weight: 400;
   opacity: 0.6; color: var(--text-dim);
 }
 .lyrics p.active .lyric-sub { opacity: 0.9; color: var(--accent-deep, #993c1d); }
@@ -854,3 +855,50 @@ body {
 .dedupe-info { flex: 1; min-width: 0; }
 .tab-edit { margin-left: 4px; font-size: 11px; opacity: 0.65; }
 .tab-edit:hover { opacity: 1; color: var(--accent-deep); }
+
+/* ---------- 5F 可视化工具按钮 / 全屏可视化 / 全屏歌词 ---------- */
+.viz-tools { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; z-index: 3; }
+.viz-btn {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg-elev);
+  color: var(--text-dim); font-size: 13px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  opacity: 0.85; transition: opacity 0.2s, color 0.2s;
+}
+.viz-btn:hover { opacity: 1; color: var(--accent-deep); border-color: var(--accent); }
+
+body.no-scroll { overflow: hidden; }
+
+/* 可视化全屏：同一个 canvas 放大铺满视口，退出后自动恢复尺寸 */
+.cover-wrap.viz-fs {
+  position: fixed; inset: 0; z-index: 90;
+  width: auto; height: auto; margin: 0;
+  background: var(--bg);
+  padding: 5vh 4vw;
+  border-radius: 0;
+}
+.cover-wrap.viz-fs .cover { display: none; }
+.cover-wrap.viz-fs .visualizer { border-radius: 16px; }
+.cover-wrap.viz-fs .viz-tools { top: 14px; right: 16px; }
+
+/* 全屏沉浸歌词 */
+.lyrics-full {
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  padding: 16px 18px 22px;
+}
+.lyrics-full-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.lyrics-full-info {
+  font-size: 13px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lyrics-full-box {
+  flex: 1; max-height: none; overflow-y: auto;
+  text-align: center; padding: 20vh 6vw;
+}
+.lyrics-full-box p { padding: 6px 0; }
+.lyrics-full-box p.active { transform: scale(1.06); }
+@media (max-width: 720px) {
+  .lyrics-full-box { padding: 14vh 4vw; }
+}

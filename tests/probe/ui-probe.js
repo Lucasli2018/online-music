@@ -528,6 +528,108 @@ function check(name, ok, extra) {
       }
     }
 
+    /* ---------- 5F 歌词与视觉（全屏歌词 / 字号行距 / 导出 lrc / 可视化多模式） ---------- */
+    check('歌词面板渲染全屏 / 导出 / 字号按钮',
+      await evalJS('["btn-lyrics-full","btn-lyrics-export","btn-lyric-smaller","btn-lyric-larger"].every(function(id){return !!document.getElementById(id);})'));
+
+    // 先写入一段带时间轴的歌词，后续断言才有内容可用
+    await clickSel('#btn-lyrics-edit');
+    await waitFor('!document.getElementById("lrc-modal").classList.contains("hidden")');
+    await evalJS('document.getElementById("lrc-input").value="[00:00.00]第一句\\n[00:05.00]第二句\\n[00:10.00]第三句\\n[00:15.00]第四句"');
+    await clickSel('#lrc-ok');
+    await sleep(250);
+    var lineCount = await evalJS('document.querySelectorAll("#lyrics p").length');
+    check('保存歌词后侧栏渲染出行', lineCount >= 4, '行数 ' + lineCount);
+
+    // 字号与行距联动
+    var sizeBefore = await evalJS('getComputedStyle(document.documentElement).getPropertyValue("--lyric-size").trim()');
+    var lhBefore = await evalJS('getComputedStyle(document.documentElement).getPropertyValue("--lyric-lh").trim()');
+    await clickSel('#btn-lyric-larger');
+    await sleep(150);
+    var sizeAfter = await evalJS('getComputedStyle(document.documentElement).getPropertyValue("--lyric-size").trim()');
+    var lhAfter = await evalJS('getComputedStyle(document.documentElement).getPropertyValue("--lyric-lh").trim()');
+    check('A＋ 放大歌词字号', sizeAfter !== sizeBefore, sizeBefore + ' → ' + sizeAfter);
+    check('字号变化时行距联动收紧', lhAfter !== lhBefore, lhBefore + ' → ' + lhAfter);
+    check('字号偏好写入 localStorage', (await evalJS('localStorage.getItem("cm-lyric-scale")')) !== null);
+    // 当前行会被放大（calc(size*1.12)），故逐行断言「不小于新字号」而不是相等
+    check('侧栏歌词实际应用了新字号',
+      await evalJS('(function(){var ps=document.querySelectorAll("#lyrics p");' +
+        'for(var i=0;i<ps.length;i++){if(parseFloat(getComputedStyle(ps[i]).fontSize)<17.9)return false;}return ps.length>0;})()'),
+      await evalJS('getComputedStyle(document.querySelector("#lyrics p")).fontSize'));
+    await clickSel('#btn-lyric-smaller');
+    await sleep(150);
+    check('A－ 缩小回原字号',
+      (await evalJS('getComputedStyle(document.documentElement).getPropertyValue("--lyric-size").trim()')) === sizeBefore);
+
+    // 全屏沉浸歌词
+    check('全屏歌词层初始隐藏',
+      await evalJS('document.getElementById("lyrics-full").classList.contains("hidden")'));
+    await clickSel('#btn-lyrics-full');
+    await sleep(250);
+    check('点全屏后歌词层打开',
+      !(await evalJS('document.getElementById("lyrics-full").classList.contains("hidden")')));
+    var fullLines = await evalJS('document.querySelectorAll("#lyrics-full-box p").length');
+    check('全屏层渲染出同样的歌词行', fullLines === lineCount, fullLines + '/' + lineCount);
+    check('全屏层显示当前曲目信息',
+      /·/.test(await evalJS('document.getElementById("lyrics-full-info").textContent')),
+      await evalJS('document.getElementById("lyrics-full-info").textContent'));
+    // 点全屏歌词行跳转：先把目标行滚进视口 —— 自动滚动会把当前行居中，
+    // 播放到后段时靠前的行会跑到视口上方，直接点坐标会落空
+    await evalJS('document.querySelector("#lyrics-full-box p:nth-child(3)").scrollIntoView({block:"center"})');
+    await sleep(250);
+    await clickSel('#lyrics-full-box p:nth-child(3)');
+    await sleep(250);
+    var seeked = await evalJS('window.CM.Player.getCurrentTime()');
+    check('点全屏歌词行可跳转到对应时间', seeked >= 9.5,
+      'currentTime=' + seeked + ' duration=' + (await evalJS('window.CM.Player.getActiveDuration()')));
+    // Esc 退出
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' });
+    await sleep(250);
+    check('按 Esc 退出全屏歌词',
+      await evalJS('document.getElementById("lyrics-full").classList.contains("hidden")'));
+    check('退出后侧栏歌词仍正常渲染',
+      (await evalJS('document.querySelectorAll("#lyrics p").length')) >= 4);
+
+    // 导出 .lrc（无头环境下不断言文件落盘，只断言流程走通并给出反馈）
+    await clickSel('#btn-lyrics-export');
+    await sleep(350);
+    var exportToast = await evalJS('document.getElementById("toast").textContent');
+    check('导出 .lrc 后给出提示', /已导出/.test(exportToast), exportToast);
+
+    // 可视化多模式
+    check('封面区渲染可视化工具按钮',
+      await evalJS('!!document.getElementById("btn-viz-mode") && !!document.getElementById("btn-viz-full")'));
+    var modes = await evalJS('JSON.stringify(window.CM.Visualizer.MODE_ORDER)');
+    check('可视化提供四种模式', JSON.parse(modes).length === 4, modes);
+    var m0 = await evalJS('window.CM.Visualizer.getMode()');
+    await clickSel('#btn-viz-mode');
+    await sleep(200);
+    var m1 = await evalJS('window.CM.Visualizer.getMode()');
+    check('点按钮切换可视化模式', m1 !== m0, m0 + ' → ' + m1);
+    check('模式按钮图标随模式变化',
+      (await evalJS('document.getElementById("btn-viz-mode").textContent')) ===
+      (await evalJS('window.CM.Visualizer.MODE_ICONS[window.CM.Visualizer.getMode()]')));
+    check('可视化模式偏好写入 localStorage', (await evalJS('localStorage.getItem("cm-viz")')) === m1);
+    // 依次点满一圈，四种模式都能画且不报错
+    for (var vi = 0; vi < 3; vi++) await clickSel('#btn-viz-mode');
+    await sleep(250);
+    check('切换一圈后回到初始模式', (await evalJS('window.CM.Visualizer.getMode()')) === m0);
+
+    // 可视化全屏
+    var canvasW = await evalJS('document.getElementById("visualizer").width');
+    await clickSel('#btn-viz-full');
+    await sleep(500);
+    check('点全屏后封面区进入全屏态',
+      await evalJS('document.querySelector(".cover-wrap").classList.contains("viz-fs")'));
+    var canvasW2 = await evalJS('document.getElementById("visualizer").width');
+    check('全屏后画布按新尺寸重算', canvasW2 > canvasW, canvasW + ' → ' + canvasW2);
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 27, code: 'Escape', key: 'Escape' });
+    await sleep(350);
+    check('按 Esc 退出可视化全屏',
+      !(await evalJS('document.querySelector(".cover-wrap").classList.contains("viz-fs")')));
+
     // 10. 无控制台错误
     var errs = await evalJS('JSON.stringify(window.__probeErrors || [])');
     check('页面运行期间无未捕获错误', errs === '[]', errs);

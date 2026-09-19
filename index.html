@@ -82,6 +82,10 @@
     <section class="panel now-panel">
       <div class="cover-wrap">
         <canvas id="visualizer" class="visualizer"></canvas>
+        <div class="viz-tools">
+          <button id="btn-viz-mode" class="viz-btn" title="切换可视化模式">📊</button>
+          <button id="btn-viz-full" class="viz-btn" title="全屏可视化">⛶</button>
+        </div>
         <div id="cover" class="cover" aria-label="封面">
           <span class="cover-note">🍊</span>
         </div>
@@ -133,6 +137,10 @@
           </label>
           <button id="btn-lyrics-match" class="chip" title="搜索多来源歌词候选（GD Studio / LRCLIB），手动选择应用">🔍 匹配</button>
           <button id="btn-lyrics-edit" class="chip" title="为当前歌曲粘贴 LRC 歌词">✎ 编辑</button>
+          <button id="btn-lyrics-full" class="chip" title="全屏沉浸歌词（Esc 退出）">⛶ 全屏</button>
+          <button id="btn-lyrics-export" class="chip" title="把当前歌词导出为 .lrc 文件">⤓ 导出</button>
+          <button id="btn-lyric-smaller" class="chip" title="缩小歌词字号">A－</button>
+          <button id="btn-lyric-larger" class="chip" title="放大歌词字号">A＋</button>
         </div>
         <div id="lyrics" class="lyrics"><p class="lyrics-empty">暂无歌词。点击「编辑」粘贴 LRC 文本，或添加链接时填写歌词地址。</p></div>
       </div>
@@ -385,6 +393,15 @@
         <button id="sleep-close" class="btn btn-primary">完成</button>
       </div>
     </div>
+  </div>
+
+  <!-- 全屏沉浸歌词 -->
+  <div id="lyrics-full" class="lyrics-full hidden">
+    <div class="lyrics-full-head">
+      <span id="lyrics-full-info" class="lyrics-full-info">未在播放</span>
+      <button id="btn-lyrics-full-close" class="chip" title="退出全屏歌词（Esc）">✕ 退出</button>
+    </div>
+    <div id="lyrics-full-box" class="lyrics lyrics-full-box"></div>
   </div>
 
   <!-- 桌面浮动歌词 -->

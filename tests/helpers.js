@@ -104,7 +104,12 @@ function createAppContext(opts) {
     Audio: opts.Audio || createAudioStub,
     localStorage: opts.storage || createStorage(),
     navigator: opts.navigator || {},
-    performance: opts.performance || { now: function () { return Date.now(); } }
+    performance: opts.performance || { now: function () { return Date.now(); } },
+    // 浏览器模块（visualizer 等）会注册窗口级监听与媒体查询
+    addEventListener: function () {},
+    removeEventListener: function () {},
+    matchMedia: function () { return { matches: false, addEventListener: function () {} }; },
+    devicePixelRatio: 1
   };
   if (opts.MediaMetadata) sandbox.MediaMetadata = opts.MediaMetadata;
   // Web Audio 替身（响度均衡 / 十段 EQ 的链路断言需要）
