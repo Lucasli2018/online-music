@@ -17,6 +17,9 @@
   var index = -1;
   var repeat = 'off';   // off | one | all
   var shuffle = false;
+  var rate = 1;                 // 倍速
+  var targetVolume = 0.8;       // 目标音量（淡入淡出基准）
+  var stopAfterCurrent = false; // 睡眠定时：本曲播完停止
 
   var urlCache = {};    // 本地歌 objectURL 缓存
   var progress = {};    // 每首歌播放进度（trackId -> 秒），持久化
@@ -102,6 +105,7 @@
 
   function handleEnded() {
     if (repeat === 'one') { active.currentTime = 0; active.play(); return; }
+    if (stopAfterCurrent) { stopAfterCurrent = false; emit('state', false); emit('playlistEnd'); return; }
     var ni = nextIndex(false);
     if (ni === -1) { emit('playlistEnd'); return; }
     loadIndex(ni, true);
@@ -128,12 +132,20 @@
 
   function loadIndex(i, autoplay) {
     if (i < 0 || i >= playlist.length) return;
-    if (active) active.pause();
+    var prev = active;
+    if (prev && !prev.paused) {
+      fadeTo(prev, 0, 160);                                  // 旧曲淡出（防爆音）
+      setTimeout(function () { try { prev.pause(); } catch (e) {} }, 180);
+    } else if (prev) {
+      prev.pause();
+    }
     index = i;
     var track = playlist[i];
     var isLocal = track.source === 'local';
     active = isLocal ? audioLocal : audioRemote;
     (isLocal ? audioRemote : audioLocal).pause();
+    active.volume = 0;                                        // 准备淡入
+    active.playbackRate = rate; active.defaultPlaybackRate = rate;
     active.src = getUrl(track);
     active.load();
     applySavedProgress(track);
@@ -152,6 +164,7 @@
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     var p = active.play();
     if (p && p.catch) p.catch(function (e) { emit('error', active && active.src, e); });
+    if (active.volume < targetVolume - 0.001) { active.volume = 0; fadeTo(active, targetVolume, 200); }
     if (CM && CM.Visualizer) CM.Visualizer.start();
   }
   function pause() { if (active) active.pause(); if (CM && CM.Visualizer) CM.Visualizer.stop(); }
@@ -161,8 +174,19 @@
   function seekTo(sec) {
     if (active && isFinite(active.duration)) active.currentTime = Math.max(0, Math.min(sec, active.duration));
   }
+  function fadeTo(el, target, ms) {
+    if (!el) return;
+    var start = el.volume, t0 = (global.performance ? performance.now() : Date.now());
+    function step(now) {
+      var p = ms <= 0 ? 1 : Math.min(1, (now - t0) / ms);
+      el.volume = start + (target - start) * p;
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
   function setVolume(v) {
     v = Math.max(0, Math.min(1, v));
+    targetVolume = v;
     audioLocal.volume = v; audioRemote.volume = v;
   }
 
@@ -225,6 +249,9 @@
       eqFilters[0].gain.value = gains[0] || 0;
       eqFilters[1].gain.value = gains[1] || 0;
       eqFilters[2].gain.value = gains[2] || 0;
-    }
+    },
+    setRate: function (r) { rate = r; if (active) { active.playbackRate = r; active.defaultPlaybackRate = r; } },
+    getRate: function () { return rate; },
+    setStopAfterCurrent: function (v) { stopAfterCurrent = !!v; }
   };
 })(window);

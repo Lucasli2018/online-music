@@ -418,3 +418,32 @@ body {
   .queue { max-height: 40vh; }
   .add-menu { left: 50% !important; transform: translateX(-50%); }
 }
+
+/* ---------- V1：倍速 / 定时 / 偏移 / 桌面歌词 ---------- */
+.offset-ctl {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-secondary, #8a8178);
+}
+.offset-ctl input[type=range] { width: 90px; }
+#lyric-offset-val { min-width: 36px; text-align: right; color: var(--accent-deep, #993c1d); font-weight: 700; }
+.panel-head .offset-ctl { margin-left: auto; margin-right: 8px; }
+
+.rate-grid, .sleep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.rate-opt, .sleep-opt {
+  padding: 11px 8px; border: 1px solid var(--border, #e3d9cf); border-radius: 10px;
+  background: var(--bg-secondary, #fff); color: var(--text-primary, #333);
+  cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.15s;
+}
+.rate-opt:hover, .sleep-opt:hover { border-color: var(--accent, #ff7a45); }
+.rate-opt.active, .sleep-opt.active {
+  background: var(--accent, #ff7a45); color: #fff; border-color: var(--accent, #ff7a45);
+}
+
+.desktop-lyrics {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  background: rgba(255, 122, 69, 0.94); color: #fff;
+  padding: 10px 24px; border-radius: 999px; z-index: 60;
+  font-size: 16px; font-weight: 600; max-width: 80vw; text-align: center;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); cursor: move; user-select: none;
+}
+.desktop-lyrics.hidden { display: none; }

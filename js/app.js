@@ -17,7 +17,11 @@
     currentTrackId: null,
     currentLines: [],
     currentLineEls: [],
-    lyricsVisible: true   // 侧栏当前是否停在「歌词」面板（决定高亮/滚动）
+    lyricsVisible: true,  // 侧栏当前是否停在「歌词」面板（决定主面板滚动）
+    deskLyricsOn: false,  // 桌面浮动歌词开关
+    lyricOffset: 0,       // 歌词整体时间偏移（毫秒）
+    sleepMode: null,      // 睡眠定时：null | 'trackEnd' | 到期时间戳(数字)
+    sleepTimer: null
   };
 
   var palette = [
@@ -285,12 +289,23 @@
     });
   }
   function syncLyrics(time) {
-    if (!state.lyricsVisible || !state.currentLines.length) return;
-    var idx = CM.Lyrics.activeIndex(state.currentLines, time);
+    var t = time + state.lyricOffset / 1000;
+    var idx = state.currentLines.length ? CM.Lyrics.activeIndex(state.currentLines, t) : -1;
     var els = state.currentLineEls;
     els.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
-    var active = els[idx];
-    if (active && active.scrollIntoView) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (state.lyricsVisible && idx >= 0) {
+      var a = els[idx];
+      if (a && a.scrollIntoView) a.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    updateDesktopLyrics(idx);
+  }
+  function updateDesktopLyrics(idx) {
+    var el = $('desktop-lyrics');
+    if (!el) return;
+    if (!state.deskLyricsOn) { el.classList.add('hidden'); return; }
+    var line = state.currentLines[idx];
+    el.textContent = line ? line.text : '♪';
+    el.classList.remove('hidden');
   }
 
   /* ---------- 主题 ---------- */
@@ -334,6 +349,77 @@
     $('eq-mid-val').textContent = (g[1] > 0 ? '+' : '') + g[1];
     $('eq-high-val').textContent = (g[2] > 0 ? '+' : '') + g[2];
     try { localStorage.setItem('cm-eq', JSON.stringify(g)); } catch (e) {}
+  }
+
+  /* ---------- 倍速 / 睡眠定时 / 桌面歌词 / 偏移 ---------- */
+  function restorePlaybackPrefs() {
+    try {
+      var r = parseFloat(localStorage.getItem('cm-rate'));
+      if (r && r !== 1) { CM.Player.setRate(r); markRate(r); }
+    } catch (e) {}
+    try {
+      var s = localStorage.getItem('cm-sleep');
+      if (s === 'trackEnd') setSleep('trackEnd', true);
+      else if (s) {
+        var exp = +s;
+        if (exp > Date.now()) setSleep(String(Math.round((exp - Date.now()) / 60000)), true);
+        else localStorage.removeItem('cm-sleep');
+      }
+    } catch (e) {}
+    try {
+      if (localStorage.getItem('cm-desk-lyrics') === '1') {
+        state.deskLyricsOn = true;
+        var db = $('btn-desktop-lyrics'); if (db) db.classList.add('active');
+      }
+    } catch (e) {}
+    try {
+      var o = parseInt(localStorage.getItem('cm-lyric-offset') || '0', 10) || 0;
+      state.lyricOffset = o;
+      var lo = $('lyric-offset');
+      if (lo) { lo.value = o; $('lyric-offset-val').textContent = (o / 1000).toFixed(1) + 's'; }
+    } catch (e) {}
+  }
+  function markRate(r) {
+    document.querySelectorAll('.rate-opt').forEach(function (b) {
+      b.classList.toggle('active', parseFloat(b.getAttribute('data-rate')) === r);
+    });
+  }
+  function setSleep(mode, silent) {
+    if (state.sleepTimer) { clearTimeout(state.sleepTimer); state.sleepTimer = null; }
+    try { localStorage.removeItem('cm-sleep'); } catch (e) {}
+    state.sleepMode = null;
+    CM.Player.setStopAfterCurrent(false);
+    if (mode === 'off' || mode === '' || mode == null) {
+      markSleep('off');
+      if (!silent) toast('已关闭睡眠定时');
+      return;
+    }
+    if (mode === 'trackEnd') {
+      state.sleepMode = 'trackEnd';
+      CM.Player.setStopAfterCurrent(true);
+      try { localStorage.setItem('cm-sleep', 'trackEnd'); } catch (e) {}
+      markSleep('trackEnd');
+      if (!silent) toast('睡眠定时：本曲播完停止');
+      return;
+    }
+    var mins = parseInt(mode, 10);
+    if (!mins) return;
+    var ms = mins * 60 * 1000, exp = Date.now() + ms;
+    state.sleepMode = exp;
+    try { localStorage.setItem('cm-sleep', String(exp)); } catch (e) {}
+    state.sleepTimer = setTimeout(function () {
+      CM.Player.pause();
+      state.sleepMode = null;
+      try { localStorage.removeItem('cm-sleep'); } catch (e) {}
+      toast('睡眠定时：已停止播放');
+    }, ms);
+    markSleep(String(mins));
+    if (!silent) toast('睡眠定时：' + mins + ' 分钟后停止');
+  }
+  function markSleep(mode) {
+    document.querySelectorAll('.sleep-opt').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-min') === String(mode));
+    });
   }
 
   /* ---------- 添加链接 ---------- */
@@ -456,6 +542,7 @@
 
     loadLyrics(); loadSettings();
     loadEQ();
+    restorePlaybackPrefs();
 
     state.currentListId = Lib.getCurrentList();
     var lists = Lib.getLists();
@@ -673,6 +760,69 @@
 
     // 同步初始侧栏状态（默认停在歌词面板，词按钮高亮）
     showSide('lyrics');
+
+    // 倍速
+    $('btn-rate').addEventListener('click', function () { markRate(CM.Player.getRate()); $('rate-modal').classList.remove('hidden'); });
+    $('rate-close').addEventListener('click', function () { $('rate-modal').classList.add('hidden'); });
+    $('rate-modal').addEventListener('click', function (e) { if (e.target === this) this.classList.add('hidden'); });
+    document.querySelectorAll('.rate-opt').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var r = parseFloat(b.getAttribute('data-rate'));
+        CM.Player.setRate(r);
+        try { localStorage.setItem('cm-rate', String(r)); } catch (e) {}
+        markRate(r);
+        toast('倍速：' + r + 'x');
+      });
+    });
+
+    // 睡眠定时
+    $('btn-sleep').addEventListener('click', function () {
+      var cur = state.sleepMode === 'trackEnd' ? 'trackEnd'
+        : (state.sleepMode ? String(Math.round((state.sleepMode - Date.now()) / 60000)) : 'off');
+      markSleep(cur); $('sleep-modal').classList.remove('hidden');
+    });
+    $('sleep-close').addEventListener('click', function () { $('sleep-modal').classList.add('hidden'); });
+    $('sleep-modal').addEventListener('click', function (e) { if (e.target === this) this.classList.add('hidden'); });
+    document.querySelectorAll('.sleep-opt').forEach(function (b) {
+      b.addEventListener('click', function () { setSleep(b.getAttribute('data-min')); });
+    });
+
+    // 桌面浮动歌词开关
+    $('btn-desktop-lyrics').addEventListener('click', function () {
+      state.deskLyricsOn = !state.deskLyricsOn;
+      this.classList.toggle('active', state.deskLyricsOn);
+      try { localStorage.setItem('cm-desk-lyrics', state.deskLyricsOn ? '1' : '0'); } catch (e) {}
+      if (state.deskLyricsOn) syncLyrics(CM.Player.getCurrentTime());
+      else { var el = $('desktop-lyrics'); if (el) el.classList.add('hidden'); }
+      toast(state.deskLyricsOn ? '已开启桌面歌词' : '已关闭桌面歌词');
+    });
+
+    // 歌词偏移微调
+    $('lyric-offset').addEventListener('input', function () {
+      state.lyricOffset = parseInt(this.value, 10) || 0;
+      $('lyric-offset-val').textContent = (state.lyricOffset / 1000).toFixed(1) + 's';
+      try { localStorage.setItem('cm-lyric-offset', String(state.lyricOffset)); } catch (e) {}
+      syncLyrics(CM.Player.getCurrentTime());
+    });
+
+    // 桌面歌词条拖动
+    (function enableDragDL() {
+      var el = $('desktop-lyrics'); if (!el) return;
+      var dx = 0, dy = 0, dragging = false;
+      el.addEventListener('pointerdown', function (e) {
+        dragging = true;
+        var r = el.getBoundingClientRect();
+        dx = e.clientX - r.left; dy = e.clientY - r.top;
+        try { el.setPointerCapture(e.pointerId); } catch (e2) {}
+      });
+      el.addEventListener('pointermove', function (e) {
+        if (!dragging) return;
+        el.style.left = (e.clientX - dx) + 'px';
+        el.style.top = (e.clientY - dy) + 'px';
+        el.style.bottom = 'auto'; el.style.transform = 'none';
+      });
+      el.addEventListener('pointerup', function () { dragging = false; });
+    })();
 
     // PWA：注册 Service Worker（离线可开 / 可安装到桌面）
     if ('serviceWorker' in navigator) {
