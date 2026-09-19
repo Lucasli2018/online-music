@@ -6,7 +6,8 @@
  *  - 忽略元数据标签行（[ti:]/[ar:]/[al:]/[by:]/[length:] 等无时间标签的行）
  *  - 逐字卡拉OK：增强格式内联 <mm:ss.xx>字级时间标签
  *  - 双语：同时间戳多行自动合并（主文本 + 翻译副文本）
- *  - 在线自动匹配：fetchLyrics，对接 LRCLIB 公共服务（CORS 友好、免 key）
+ *  - 在线自动匹配：fetchLyrics，LRCLIB → GD Studio（含翻译）多级回退
+ *  - 手动匹配：searchCandidates 列出多来源候选，fetchCandidate 按候选取词
  */
 (function (global) {
   'use strict';
@@ -16,6 +17,7 @@
   var INLINE_RE = /<(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?>/g;
   var API_BASE = 'https://lrclib.net/api/get';
   var SEARCH_BASE = 'https://lrclib.net/api/search';
+  var GD_BASE = 'https://music-api.gdstudio.xyz/api.php';
 
   function toSec(min, sec, ms) {
     return min * 60 + sec + (ms ? parseInt(ms.padEnd(3, '0').slice(0, 3), 10) / 1000 : 0);
@@ -126,8 +128,69 @@
     });
   }
 
-  // 在线自动匹配歌词：按 歌名/歌手(+专辑+时长) 查询 LRCLIB，失败回退搜索。
-  // 返回 LRC 原文字符串。需要联网，依赖 lrclib.net 公共服务（CORS 友好、免 key）。
+  /* ---------- GD Studio 歌词（GD音乐台，含翻译） ---------- */
+  function gdApi(params) {
+    var qs = Object.keys(params).map(function (k) {
+      return k + '=' + encodeURIComponent(params[k]);
+    }).join('&');
+    return fetch(GD_BASE + '?' + qs).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }).then(function (text) {
+      try { return JSON.parse(text); } catch (e) { throw new Error('响应异常'); }
+    });
+  }
+  // GD Studio 歌词：tlyric（翻译）按时间戳合并进主歌词，供双语渲染
+  function gdMergeTranslation(lyric, tlyric) {
+    var lrc = String(lyric || '').replace(/\r/g, '');
+    if (!tlyric) return lrc;
+    var trans = String(tlyric).replace(/\r/g, '').split('\n');
+    var map = {};
+    trans.forEach(function (line) {
+      LINE_RE.lastIndex = 0;
+      var m = LINE_RE.exec(line);
+      if (!m) return;
+      var key = m[1] + ':' + m[2] + '.' + (m[3] || '00');
+      var txt = line.replace(LINE_RE, '').trim();
+      if (txt) map[key] = txt;
+    });
+    if (!Object.keys(map).length) return lrc;
+    return lrc.split('\n').map(function (line) {
+      LINE_RE.lastIndex = 0;
+      var m = LINE_RE.exec(line);
+      if (!m) return line;
+      var key = m[1] + ':' + m[2] + '.' + (m[3] || '00');
+      var txt = line.replace(LINE_RE, '').trim();
+      return (txt && map[key]) ? (line + '\n' + map[key]) : line;
+    }).join('\n');
+  }
+  function gdFetchLyric(lid, sub) {
+    return gdApi({ types: 'lyric', source: sub || 'netease', id: lid }).then(function (j) {
+      if (!j || (!j.lyric && !j.lrc)) throw new Error('无歌词数据');
+      return gdMergeTranslation(j.lyric || j.lrc, j.tlyric || j.tlrc);
+    });
+  }
+  // GD Studio 候选搜索：按 关键词 搜索曲目，返回歌词匹配候选
+  function gdSearchCandidates(query, limit) {
+    return gdApi({ types: 'search', source: 'netease', name: query, count: limit || 10, pages: '1' })
+      .then(function (list) {
+        if (!Array.isArray(list)) return [];
+        return list.filter(function (t) { return t && t.id; }).map(function (t) {
+          return {
+            prov: 'gd',
+            id: String(t.id),
+            lid: t.lyric_id || t.id,
+            lsrc: 'netease',
+            title: t.name || '未知标题',
+            artist: Array.isArray(t.artist) ? t.artist.join(' / ') : (t.artist || ''),
+            album: t.album || ''
+          };
+        });
+      });
+  }
+
+  // 在线自动匹配歌词：LRCLIB 精确 → GD Studio（含翻译）→ LRCLIB 搜索，多级回退。
+  // 返回 LRC 原文字符串。需要联网。
   function fetchLyrics(opts) {
     opts = opts || {};
     var title = (opts.title || '').trim();
@@ -141,6 +204,12 @@
       if (opts.duration) u += '&duration=' + Math.round(opts.duration);
       return fetchJSON(u);
     }
+    function byGd() {
+      return gdSearchCandidates(title, 5).then(function (arr) {
+        if (!arr.length) throw new Error('GD 无结果');
+        return gdFetchLyric(arr[0].lid, arr[0].lsrc);
+      });
+    }
     function bySearch() {
       var q = SEARCH_BASE + '?q=' + encodeURIComponent(title);
       return fetchJSON(q).then(function (list) {
@@ -149,7 +218,44 @@
         return fetchJSON(API_BASE + '?id=' + encodeURIComponent(arr[0].id));
       });
     }
-    return byQuery().catch(function () { return bySearch(); }).then(function (d) {
+    return byQuery()
+      .catch(function () { return byGd(); })
+      .catch(function () { return bySearch(); })
+      .then(function (d) {
+        var lrc = typeof d === 'string' ? d : (d && (d.syncedLyrics || d.plainLyrics));
+        if (!lrc) throw new Error('无歌词数据');
+        return lrc;
+      });
+  }
+
+  // 手动匹配：按关键词聚合多来源候选（GD Studio·网易云 + LRCLIB），供用户挑选
+  function searchCandidates(query, limit) {
+    if (!query || !query.trim()) return Promise.resolve([]);
+    var n = limit || 10;
+    var gd = gdSearchCandidates(query, n).then(function (arr) {
+      return arr.map(function (c) { c.provLabel = 'GD · 网易云'; return c; });
+    }).catch(function () { return []; });
+    var lrc = fetchJSON(SEARCH_BASE + '?q=' + encodeURIComponent(query.trim())).then(function (list) {
+      var arr = Array.isArray(list) ? list : (list && list.data ? list.data : []);
+      return arr.slice(0, n).map(function (t) {
+        return {
+          prov: 'lrclib',
+          id: t.id,
+          title: t.name || t.trackName || '未知标题',
+          artist: t.artistName || t.artist || '',
+          album: t.albumName || t.album || '',
+          duration: t.duration || 0,
+          provLabel: 'LRCLIB'
+        };
+      });
+    }).catch(function () { return []; });
+    return Promise.all([gd, lrc]).then(function (rs) { return rs[0].concat(rs[1]); });
+  }
+  // 按候选取词：GD → lyric 端点（含翻译合并）；LRCLIB → get 端点
+  function fetchCandidate(cand) {
+    if (!cand) return Promise.reject(new Error('候选无效'));
+    if (cand.prov === 'gd') return gdFetchLyric(cand.lid, cand.lsrc);
+    return fetchJSON(API_BASE + '?id=' + encodeURIComponent(cand.id)).then(function (d) {
       var lrc = d && (d.syncedLyrics || d.plainLyrics);
       if (!lrc) throw new Error('无歌词数据');
       return lrc;
@@ -209,6 +315,8 @@
     fetchPlainLyrics: fetchPlainLyrics,
     plainToLrc: plainToLrc,
     probe: probe,
+    searchCandidates: searchCandidates,
+    fetchCandidate: fetchCandidate,
     API_BASE: API_BASE
   };
 })(window);

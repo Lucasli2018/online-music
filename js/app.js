@@ -27,6 +27,7 @@
   };
   // 在线曲目播放失败时的自动跳过节流（60s 内最多 3 次，防连锁死循环）
   var onlineSkip = { count: 0, since: 0 };
+  var onlineRetry = { id: null, at: 0 };
 
   var palette = [
     'linear-gradient(135deg,#ff9a6c,#ff5e62)',
@@ -379,37 +380,101 @@
     }
   }
 
-  /* ---------- 在线自动匹配歌词 ---------- */
-  function matchLyrics() {
+  /* ---------- 在线曲目播放失败兜底 ---------- */
+  function skipOnline() {
+    var now = Date.now();
+    if (now - onlineSkip.since > 60000) { onlineSkip.count = 0; onlineSkip.since = now; }
+    onlineSkip.count++;
+    if (onlineSkip.count > 3) {
+      CM.Player.pause();
+      toast('多个在线曲目无法播放，已停止自动跳过，请检查曲库');
+      return;
+    }
+    toast('在线曲目不可播放（可能已失效）：' + ((CM.Player.getTrack() || {}).title || '') + '，已自动跳过');
+    setTimeout(function () { CM.Player.next(); }, 700);
+  }
+  /* ---------- 歌词匹配（多来源候选，手动选择） ---------- */
+  var matchCands = [];
+  function openMatchModal() {
     var track = CM.Player.getTrack();
     if (!track) { toast('请先选择一首歌'); return; }
-    var title = (track.title || '').trim();
-    if (!title) { toast('缺少歌名，无法匹配'); return; }
-    var btn = $('btn-lyrics-match');
-    if (btn) btn.disabled = true;
-    var opts = {
-      title: title,
-      artist: track.artist || '',
-      album: track.album || '',
-      duration: CM.Player.getActiveDuration ? CM.Player.getActiveDuration() : null
-    };
-    function applyLrc(lrc, tip) {
+    $('match-modal').classList.remove('hidden');
+    var q = $('match-query');
+    var kw = ((track.title || '') + ' ' + (track.artist || '')).trim();
+    if (q && !q.value.trim()) q.value = kw;
+    searchMatch();
+    setTimeout(function () { if (q) q.focus(); }, 0);
+  }
+  function closeMatchModal() {
+    $('match-modal').classList.add('hidden');
+    $('match-results').innerHTML = '';
+    $('match-status').textContent = '';
+    matchCands = [];
+  }
+  function searchMatch() {
+    var q = $('match-query').value.trim();
+    var st = $('match-status');
+    if (!q) { toast('请输入歌名 / 歌手'); return; }
+    st.textContent = '正在搜索候选（GD Studio + LRCLIB）…';
+    $('match-results').innerHTML = '';
+    matchCands = [];
+    CM.Lyrics.searchCandidates(q).then(function (list) {
+      matchCands = list || [];
+      renderMatchResults();
+      st.textContent = matchCands.length
+        ? ('找到 ' + matchCands.length + ' 条候选，点击即可应用')
+        : '没有找到候选，换个关键词试试';
+    }).catch(function (e) {
+      st.textContent = '搜索失败：' + (e && e.message ? e.message : '网络受限');
+    });
+  }
+  function renderMatchResults() {
+    var box = $('match-results');
+    box.innerHTML = '';
+    if (!matchCands.length) {
+      var p = document.createElement('p');
+      p.className = 'online-empty';
+      p.textContent = '暂无候选';
+      box.appendChild(p);
+      return;
+    }
+    matchCands.forEach(function (c, idx) {
+      var row = document.createElement('div');
+      row.className = 'online-item match-item';
+      var icon = document.createElement('div');
+      icon.className = 'online-cover';
+      icon.textContent = '♪';
+      row.appendChild(icon);
+      var meta = document.createElement('div');
+      meta.className = 'online-meta';
+      var tt = document.createElement('div'); tt.className = 'online-title'; tt.textContent = c.title;
+      var ar = document.createElement('div'); ar.className = 'online-artist';
+      ar.textContent = (c.artist || '未知艺术家') + (c.album ? ' · ' + c.album : '');
+      meta.appendChild(tt); meta.appendChild(ar);
+      row.appendChild(meta);
+      var src = document.createElement('span');
+      src.className = 'match-src';
+      src.textContent = c.provLabel || c.prov;
+      row.appendChild(src);
+      row.addEventListener('click', function () { applyMatchCandidate(idx); });
+      box.appendChild(row);
+    });
+  }
+  function applyMatchCandidate(idx) {
+    var track = CM.Player.getTrack();
+    var c = matchCands[idx];
+    if (!track || !c) return;
+    var st = $('match-status');
+    st.textContent = '正在获取歌词：' + c.title + '…';
+    CM.Lyrics.fetchCandidate(c).then(function (lrc) {
+      if (!lrc) throw new Error('无歌词数据');
       state.lyrics[track.id] = lrc; saveLyrics();
       track.lrc = lrc;
       showLyricsFor(track);
-      toast(tip);
-    }
-    CM.Lyrics.fetchLyrics(opts).then(function (lrc) {
-      applyLrc(lrc, '已自动匹配歌词：' + title);
-    }).catch(function () {
-      // 兜底：lyrics.ovh 纯文本歌词（无时间轴 → 按估算时间轴展开，避免整块挤在一行）
-      return CM.Lyrics.fetchPlainLyrics({ title: title, artist: opts.artist }).then(function (text) {
-        applyLrc(CM.Lyrics.plainToLrc(text, 4), '仅找到纯文本歌词（时间轴为估算）：' + title);
-      });
+      closeMatchModal();
+      toast('已应用歌词：' + c.title + '（' + (c.provLabel || c.prov) + '）');
     }).catch(function (e) {
-      toast('未找到匹配歌词，可手动编辑（' + (e && e.message ? e.message : '服务不可用') + '）');
-    }).then(function () {
-      if (btn) btn.disabled = false;
+      st.textContent = '获取失败：' + (e && e.message ? e.message : '网络受限');
     });
   }
 
@@ -565,7 +630,22 @@
     renderSourceTabs();
     renderSourceConfig();
     refreshAccount();
+    var box = $('online-results');
+    if (box && !box.children.length) {
+      var hint = document.createElement('p');
+      hint.className = 'online-empty';
+      var src = CM.Online.getSources().filter(function (s) { return s.id === CM.Online.getSource(); })[0] || {};
+      hint.textContent = '搜索 ' + (src.name || '在线') + ' 曲库，点击即可播放并加入曲库';
+      box.appendChild(hint);
+    }
     setTimeout(function () { var q = $('online-query'); if (q) q.focus(); }, 0);
+  }
+  function toggleOnlineSettings() {
+    var panel = $('online-settings');
+    var btn = $('online-settings-toggle');
+    if (!panel) return;
+    panel.classList.toggle('hidden');
+    if (btn) btn.classList.toggle('active', !panel.classList.contains('hidden'));
   }
   function closeOnlineModal() {
     $('online-modal').classList.add('hidden');
@@ -729,6 +809,13 @@
       var it = items[i++];
       var el = document.querySelector('.online-item[data-aid="' + it.id + '"] .online-lyric');
       if (!el) return step(); // 结果已被替换
+      // GD Studio：搜索结果自带歌词 id，直接标注，省一次探测请求
+      if (it.lyricId) {
+        el.dataset.state = 'yes';
+        el.textContent = '♪ 支持歌词';
+        setTimeout(step, 0);
+        return;
+      }
       CM.Lyrics.probe({ title: it.title, artist: it.artist, duration: it.duration })
         .then(function (ok) {
           el.dataset.state = ok ? 'yes' : 'no';
@@ -756,31 +843,45 @@
   }
   function addOnlineTrack(item, play) {
     if (!item || !item.id) { toast('曲目信息无效'); return; }
-    var rec = CM.Online.toRecord(item);
-    // 入库 / 播放前先校验曲目在 Audius 上真实可播，避免失效 id 造成播放报错
-    toast((play ? '正在加载：' : '正在校验：') + rec.title);
-    CM.Online.verify(item).then(function (ok) {
-      if (!ok) { toast('该曲目在 Audius 上已失效或不可播放：' + rec.title); return; }
-      if (!Lib.get(rec.id)) { addRemoteRecord(rec); persistRemote(); }
-      renderLibrary(); renderTabs();
-      toast((play ? '正在播放：' : '已加入曲库：') + rec.title);
-      if (play) {
-        var all = Lib.resolve(Lib.listIds('all'));
-        CM.Player.setPlaylist(all);
-        var i = -1;
-        for (var k = 0; k < all.length; k++) { if (all[k].id === rec.id) { i = k; break; } }
-        if (i >= 0) CM.Player.loadIndex(i, true);
-        renderQueue();
+    toast((play ? '正在加载：' : '正在校验：') + item.title);
+    // GD Studio 等二次解析音源：先换取真实播放 URL（解析成功即为校验通过），再入库
+    CM.Online.prepare(item).then(function (it) {
+      var resolved = it.playUrl; // prepare 后仍无 URL 且需要解析 → 判定失效
+      if (it.needsResolve && !resolved) {
+        toast('无法获取播放链接（可能已失效或触发限流）：' + it.title); return;
       }
-      // 静默尝试在线匹配歌词（歌名 / 艺术家 → LRCLIB）
-      if (!state.lyrics[rec.id]) {
-        CM.Lyrics.fetchLyrics({ title: rec.title, artist: rec.artist, duration: rec.duration })
-          .then(function (lrc) {
-            if (!lrc || state.lyrics[rec.id]) return;
-            state.lyrics[rec.id] = lrc; saveLyrics(); rec.lrc = lrc;
-            if (state.currentTrackId === rec.id) showLyricsFor(rec);
-          }).catch(function () {});
-      }
+      var rec = CM.Online.toRecord(it);
+      var checked = it.needsResolve
+        ? Promise.resolve(true)
+        : CM.Online.verify(it).then(function (ok) {
+            if (!ok) toast('该曲目在音源上已失效或不可播放：' + rec.title);
+            return ok;
+          });
+      checked.then(function (ok) {
+        if (!ok) return;
+        if (!Lib.get(rec.id)) { addRemoteRecord(rec); persistRemote(); }
+        renderLibrary(); renderTabs();
+        toast((play ? '正在播放：' : '已加入曲库：') + rec.title);
+        if (play) {
+          var all = Lib.resolve(Lib.listIds('all'));
+          CM.Player.setPlaylist(all);
+          var i = -1;
+          for (var k = 0; k < all.length; k++) { if (all[k].id === rec.id) { i = k; break; } }
+          if (i >= 0) CM.Player.loadIndex(i, true);
+          renderQueue();
+        }
+        // 静默尝试在线匹配歌词（GD Studio 优先，回退 LRCLIB）
+        if (!state.lyrics[rec.id]) {
+          CM.Lyrics.fetchLyrics({ title: rec.title, artist: rec.artist, duration: rec.duration })
+            .then(function (lrc) {
+              if (!lrc || state.lyrics[rec.id]) return;
+              state.lyrics[rec.id] = lrc; saveLyrics(); rec.lrc = lrc;
+              if (state.currentTrackId === rec.id) showLyricsFor(rec);
+            }).catch(function () {});
+        }
+      });
+    }).catch(function () {
+      toast('加载失败：' + (item.title || '') + '（网络受限或触发限流）');
     });
   }
 
@@ -916,18 +1017,28 @@
     });
     CM.Player.on('error', function (title) {
       var cur = CM.Player.getTrack();
+      // GD Studio 曲目：播放 URL 有时效，失效先重解析一次再播放（每曲限一次，防死循环）
+      if (cur && cur.sid === 'gdstudio' && cur.lid && onlineRetry.id !== cur.id) {
+        onlineRetry.id = cur.id;
+        onlineRetry.at = Date.now();
+        toast('播放链接已过期，正在重新获取：' + (cur.title || ''));
+        CM.Online.prepare({ sid: 'gdstudio', id: cur.oid, gsub: cur.gsub, picId: cur.pid, title: cur.title })
+          .then(function (it) {
+            if (!it || !it.playUrl) throw new Error('重解析失败');
+            cur.url = it.playUrl;
+            if (it.cover) cur.cover = it.cover;
+            persistRemote(); // 同步回曲库持久化
+            CM.Player.loadIndex(CM.Player.getIndex(), true);
+          })
+          .catch(function () {
+            toast('重新获取播放链接失败：' + (cur.title || ''));
+            skipOnline();
+          });
+        return;
+      }
       // 在线曲目：多为曲目已失效 / 不可播放，自动跳过以免卡住（连续失败 3 次即停，防死循环）
       if (cur && cur.source === 'online') {
-        var now = Date.now();
-        if (now - onlineSkip.since > 60000) { onlineSkip.count = 0; onlineSkip.since = now; }
-        onlineSkip.count++;
-        if (onlineSkip.count > 3) {
-          CM.Player.pause();
-          toast('多个在线曲目无法播放，已停止自动跳过，请检查曲库');
-          return;
-        }
-        toast('在线曲目不可播放（可能已失效）：' + (cur.title || '') + '，已自动跳过');
-        setTimeout(function () { CM.Player.next(); }, 700);
+        skipOnline();
         return;
       }
       toast('播放失败' + (title ? '：' + title : '') + '（链接可能失效或跨域受限）');
@@ -1040,6 +1151,7 @@
     function bindEl(id, ev, fn) { var el = $(id); if (el) el.addEventListener(ev, fn); }
     bindEl('btn-online', 'click', openOnlineModal);
     bindEl('online-close', 'click', closeOnlineModal);
+    bindEl('online-settings-toggle', 'click', toggleOnlineSettings);
     bindEl('online-search', 'click', searchOnline);
     bindEl('online-query', 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchOnline(); } });
     bindEl('online-modal', 'click', function (e) { if (e.target === this) closeOnlineModal(); });
@@ -1093,8 +1205,12 @@
       t.addEventListener('click', function () { showSide(t.getAttribute('data-panel')); });
     });
 
-    // 歌词在线自动匹配
-    $('btn-lyrics-match').addEventListener('click', matchLyrics);
+    // 歌词在线匹配（多来源候选，手动选择）
+    $('btn-lyrics-match').addEventListener('click', openMatchModal);
+    bindEl('match-close', 'click', closeMatchModal);
+    bindEl('match-search', 'click', searchMatch);
+    bindEl('match-query', 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchMatch(); } });
+    bindEl('match-modal', 'click', function (e) { if (e.target === this) closeMatchModal(); });
     // 歌词编辑
     $('btn-lyrics-edit').addEventListener('click', function () {
       var id = state.currentTrackId;

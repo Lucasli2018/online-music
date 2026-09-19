@@ -108,7 +108,7 @@
           <label class="offset-ctl" title="歌词整体时间偏移（毫秒），补偿手写 LRC 快慢">
             偏移 <input id="lyric-offset" type="range" min="-5000" max="5000" step="100" value="0" /> <span id="lyric-offset-val">0.0s</span>
           </label>
-          <button id="btn-lyrics-match" class="chip" title="按歌名/歌手在线自动匹配歌词（需联网）">🔍 匹配</button>
+          <button id="btn-lyrics-match" class="chip" title="搜索多来源歌词候选（GD Studio / LRCLIB），手动选择应用">🔍 匹配</button>
           <button id="btn-lyrics-edit" class="chip" title="为当前歌曲粘贴 LRC 歌词">✎ 编辑</button>
         </div>
         <div id="lyrics" class="lyrics"><p class="lyrics-empty">暂无歌词。点击「编辑」粘贴 LRC 文本，或添加链接时填写歌词地址。</p></div>
@@ -148,34 +148,57 @@
     </div>
   </div>
 
-  <!-- 在线音乐弹窗（Audius） -->
+  <!-- 在线音乐弹窗 -->
   <div id="online-modal" class="modal hidden">
     <div class="modal-card online-card">
-      <h3>🌐 在线音乐</h3>
+      <div class="online-head">
+        <h3>在线音乐</h3>
+        <div class="online-head-actions">
+          <button id="online-settings-toggle" class="online-icon-btn" title="音源设置">⚙</button>
+          <button id="online-close" class="online-icon-btn" title="关闭">✕</button>
+        </div>
+      </div>
       <div id="online-sources" class="online-sources"></div>
       <div class="online-search-row">
-        <input id="online-query" type="text" placeholder="输入歌名 / 艺术家 / 关键词，回车搜索" />
-        <button id="online-search" class="btn btn-primary">搜索</button>
+        <input id="online-query" type="text" placeholder="搜索歌名 / 艺术家 / 关键词，回车即搜" />
+        <button id="online-search" class="btn btn-primary online-search-btn">搜索</button>
       </div>
-      <div id="online-source-config" class="online-source-config hidden"></div>
-      <div id="audius-only">
-        <details class="online-key">
-          <summary>⚙ Audius API Key（可选）</summary>
-          <input id="online-apikey" type="text" placeholder="粘贴 API Key 可提升速率配额" />
-          <p class="online-key-hint">只需 API Key（官方允许放在前端）。<b>Bearer Token 是后端专用凭据</b>，填进网页等于公开泄露，本页不接受也不保存它。</p>
-        </details>
-        <div class="audius-account">
-          <span id="audius-account" class="account-label">未连接 Audius 账号</span>
-          <button id="btn-audius-login" class="chip" title="用 Audius 账号登录（OAuth 2.0 PKCE，只读权限）">连接账号</button>
-          <button id="btn-audius-mine" class="chip hidden" title="载入我在 Audius 发布的曲目">我的曲目</button>
-          <button id="btn-audius-logout" class="chip hidden" title="断开连接">退出</button>
+      <div id="online-settings" class="online-settings hidden">
+        <div id="online-source-config" class="online-source-config hidden"></div>
+        <div id="audius-only">
+          <details class="online-key">
+            <summary>Audius API Key（可选，提升速率配额）</summary>
+            <input id="online-apikey" type="text" placeholder="粘贴 API Key" />
+            <p class="online-key-hint">只需 API Key（官方允许放在前端）。<b>Bearer Token 是后端专用凭据</b>，填进网页等于公开泄露，本页不接受也不保存它。</p>
+          </details>
+          <div class="audius-account">
+            <span id="audius-account" class="account-label">未连接 Audius 账号</span>
+            <button id="btn-audius-login" class="chip online-account-chip" title="用 Audius 账号登录（OAuth 2.0 PKCE，只读权限）">连接账号</button>
+            <button id="btn-audius-mine" class="chip online-account-chip hidden" title="载入我在 Audius 发布的曲目">我的曲目</button>
+            <button id="btn-audius-logout" class="chip online-account-chip hidden" title="断开连接">退出</button>
+          </div>
         </div>
       </div>
       <p id="online-status" class="online-status"></p>
       <div id="online-results" class="online-results"></div>
-      <div class="modal-actions">
-        <button id="online-close" class="btn">关闭</button>
+    </div>
+  </div>
+
+  <!-- 歌词匹配弹窗（多来源候选，手动选择） -->
+  <div id="match-modal" class="modal hidden">
+    <div class="modal-card online-card match-card">
+      <div class="online-head">
+        <h3>歌词匹配</h3>
+        <div class="online-head-actions">
+          <button id="match-close" class="online-icon-btn" title="关闭">✕</button>
+        </div>
       </div>
+      <div class="online-search-row">
+        <input id="match-query" type="text" placeholder="歌名 / 歌手，回车搜索" />
+        <button id="match-search" class="btn btn-primary online-search-btn">搜索</button>
+      </div>
+      <p id="match-status" class="online-status"></p>
+      <div id="match-results" class="online-results match-results"></div>
     </div>
   </div>
 

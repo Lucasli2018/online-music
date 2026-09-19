@@ -51,7 +51,7 @@
     var sid = item.sid || current;
     // Audius 沿用历史 id 规则（audius-xxx），避免与已入库曲目重复
     var id = (sid === 'audius' ? 'audius-' : 'ol-' + sid + '-') + item.id;
-    return {
+    var rec = {
       id: id,
       title: item.title || '未知标题',
       artist: item.artist || '未知艺术家',
@@ -65,6 +65,11 @@
       source: 'online',
       addedAt: Date.now()
     };
+    // GD Studio 等需要二次解析的音源：保留歌词 id / 封面 id / 子源，供后续重解析与歌词匹配
+    if (item.lyricId) { rec.lid = item.lyricId; rec.lsrc = item.lyricSource || sid; }
+    if (item.picId) rec.pid = item.picId;
+    if (item.gsub) rec.gsub = item.gsub;
+    return rec;
   }
   function verify(item) {
     if (!item) return Promise.resolve(false);
@@ -72,6 +77,14 @@
     if (!src) return Promise.resolve(false);
     if (src.verify) return src.verify(item);
     return Promise.resolve(!!item.playUrl);
+  }
+  // 播放前准备：对需要二次解析的音源（GD Studio）换取真实播放 URL 与封面。
+  // 不需要解析的音源（Audius/Jamendo/iTunes）原样返回。
+  function prepare(item) {
+    if (!item) return Promise.resolve(item);
+    var src = sources[item.sid || current];
+    if (!src || !src.resolve) return Promise.resolve(item);
+    return src.resolve(item).then(function () { return item; });
   }
 
   /* ---------- 内置音源：Audius ---------- */
@@ -131,6 +144,7 @@
     search: search,
     toRecord: toRecord,
     verify: verify,
+    prepare: prepare,
     normalize: normalize,
     streamUrl: streamUrl,
     getApiKey: getApiKey,
