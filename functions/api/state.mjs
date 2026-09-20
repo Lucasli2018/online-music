@@ -1,16 +1,17 @@
 /* /api/state —— 跨设备同步曲库 / 歌单 / 设置 / 播放统计与进度
- *   GET  读回云端快照（需口令头）
- *   PUT  上传本地快照（需口令头；body 为 {state:{...}} 或直接是 state 对象）
+ *   GET  读回云端快照（需登录）
+ *   PUT  上传本地快照（需登录；body 为 {state:{...}} 或直接是 state 对象）
  *
  * 冲突策略：服务端不做合并，只记录 updatedAt。前端负责在覆盖前做时间比较与提示，
  * 避免自动覆盖把用户的歌单弄丢。
  */
-import { authSlug, json, sanitizeState, stateKey } from '../_lib/core.mjs';
+import { json, sanitizeState, stateKey } from '../_lib/core.mjs';
+import { requireCloud } from '../_lib/session.mjs';
 
 export async function onRequestGet({ request, env }) {
-  const slug = await authSlug(request);
-  if (!slug) return json({ error: '口令不合法（至少 10 位）' }, 401);
-  if (!env || !env.MUSIC_BUCKET) return json({ error: '未绑定 R2（MUSIC_BUCKET）' }, 503);
+  const a = await requireCloud(request, env);
+  if (a.error) return json({ error: a.error }, a.status);
+  const slug = a.slug;
 
   const obj = await env.MUSIC_BUCKET.get(stateKey(slug));
   if (!obj) return json({ slug: slug, empty: true, state: null, updatedAt: 0 });
@@ -26,9 +27,9 @@ export async function onRequestGet({ request, env }) {
 }
 
 export async function onRequestPut({ request, env }) {
-  const slug = await authSlug(request);
-  if (!slug) return json({ error: '口令不合法（至少 10 位）' }, 401);
-  if (!env || !env.MUSIC_BUCKET) return json({ error: '未绑定 R2（MUSIC_BUCKET）' }, 503);
+  const a = await requireCloud(request, env);
+  if (a.error) return json({ error: a.error }, a.status);
+  const slug = a.slug;
 
   let body;
   try { body = await request.json(); }

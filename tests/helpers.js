@@ -162,17 +162,34 @@ function errorResponse(status) {
   };
 }
 
-/* routes: [[正则, url => 响应], ...]；调用记录挂在 fn.calls */
+/* routes: [[正则, url => 响应], ...]
+ * 调用记录：
+ *   fn.calls —— 纯 URL 字符串数组（老断言继续可用）
+ *   fn.ops   —— [{ url, init }]，需要检查请求头 / method / body 时用这个
+ *   fn.headerOf(i, name) —— 第 i 次请求的某个请求头（大小写不敏感）
+ */
 function mockFetch(routes) {
-  var fn = function (url) {
+  var fn = function (url, init) {
     var u = String(url);
     fn.calls.push(u);
+    fn.ops.push({ url: u, init: init || {} });
     for (var i = 0; i < routes.length; i++) {
-      if (routes[i][0].test(u)) return Promise.resolve(routes[i][1](u));
+      if (routes[i][0].test(u)) return Promise.resolve(routes[i][1](u, init || {}));
     }
     return Promise.reject(new Error('未匹配的请求: ' + u));
   };
   fn.calls = [];
+  fn.ops = [];
+  fn.headerOf = function (i, name) {
+    var op = fn.ops[i];
+    if (!op) return undefined;
+    var h = op.init.headers || {};
+    var want = String(name).toLowerCase();
+    var key = Object.keys(h).filter(function (k) { return k.toLowerCase() === want; })[0];
+    return key ? h[key] : undefined;
+  };
+  fn.bodyOf = function (i) { return fn.ops[i] && fn.ops[i].init.body; };
+  fn.methodOf = function (i) { return fn.ops[i] && fn.ops[i].init.method; };
   return fn;
 }
 

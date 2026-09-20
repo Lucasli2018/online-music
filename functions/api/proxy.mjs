@@ -5,9 +5,15 @@
  * 由 Functions 服务端拉流再回传（服务端不受 CORS 限制），前端即可走 Web Audio 真实分析。
  *
  * 用法：GET /api/proxy?s=<slug>&u=<encodeURIComponent(音频直链)>
- * 安全：① 必须带有效 slug（即要有口令才拿得到）；② 域名白名单；③ 只回传音频类型。
+ * 安全：① 必须带**已注册账号的真实空间 slug**；② 域名白名单；③ 只回传音频类型。
+ *
+ * 为什么这里要比 /api/audio/:id 多查一次 D1：
+ *   audio/:id 只能命中「调用者已知道 20 位 hex slug 的」那个空间的音频，拿不到别的；
+ *   而 proxy 能代为请求任意外部地址，一旦 slug 只校验格式，它就退化成公开代理。
+ *   所以这里必须确认 slug 真的对应一个账号（users.space_slug 唯一索引，查得很快）。
  */
 import { json } from '../_lib/core.mjs';
+import { findBySlug } from '../_lib/users.mjs';
 
 const SLUG_RE = /^[0-9a-f]{20}$/;
 
@@ -27,6 +33,10 @@ export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const slug = url.searchParams.get('s') || '';
   if (!SLUG_RE.test(slug)) return new Response('缺少空间标识', { status: 401 });
+  if (env && env.DB) {
+    const owner = await findBySlug(env, slug);
+    if (!owner) return new Response('空间标识无效', { status: 401 });
+  }
 
   const target = url.searchParams.get('u') || '';
   let u;

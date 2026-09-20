@@ -10,3 +10,19 @@ pages_build_output_dir = "."
 [[r2_buckets]]
 binding = "MUSIC_BUCKET"
 bucket_name = "music-audio"
+
+# D1 绑定声明（账号密码体系：users / sessions / login_attempts）
+# 线上生效的那份配置同样在 Pages 项目里：Settings → Functions → D1 database bindings
+#   DB → online-music-db
+# 首次部署前必须先建表，否则线上所有云端接口都会 503：
+#   npx wrangler d1 migrations apply online-music-db --remote
+[[d1_databases]]
+binding = "DB"
+database_name = "online-music-db"
+database_id = "adf62ad1-0c09-4c7f-bcbc-3452e1f7fea0"
+
+# PBKDF2 迭代数。Workers 免费计划的单次请求 CPU 上限是 10ms，100000 次迭代可能超限
+# 并返回 500 / 1102（CPU time exceeded）；付费计划保持默认即可。
+# 若线上登录报 500，把这里降到 20000 或 10000（老账号会在下次登录成功时自动跟进新值）。
+[vars]
+AUTH_ITER = "100000"

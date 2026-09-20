@@ -791,6 +791,110 @@ button, .btn, .chip, .ctrl, .mini-btn, .viz-btn, .panel-tab, .list-tab,
 .cloud-hint { font-size: 12px; color: var(--text-dim); line-height: 1.7; margin-top: 8px; }
 .cloud-hint b { color: var(--accent-deep); }
 .cloud-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+/* ---------- 登录 / 注册 ---------- */
+.auth-box { margin-top: 10px; }
+.auth-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: var(--bg-sunken);
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+}
+.auth-tab:hover { color: var(--text); }
+.auth-tab.active {
+  background: var(--bg-elev);
+  color: var(--accent-deep);
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+.auth-field { margin-bottom: 12px; }
+.auth-field > label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.auth-field > input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+.auth-field > input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 122, 69, 0.16);
+}
+.auth-submit { width: 100%; margin-top: 4px; }
+.auth-submit[disabled] { opacity: 0.6; cursor: progress; }
+
+/* 已登录的账号条 */
+.cloud-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-sunken);
+}
+.cloud-me-avatar {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+  color: #fff;
+  font-size: 16px;
+}
+.cloud-me-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.cloud-me-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 旧口令空间接管 */
+.cloud-adopt {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+.cloud-adopt > summary {
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  list-style: none;
+}
+.cloud-adopt > summary::-webkit-details-marker { display: none; }
+.cloud-adopt > summary::before { content: '▸ '; }
+.cloud-adopt[open] > summary::before { content: '▾ '; }
+.cloud-adopt[open] > summary { margin-bottom: 10px; color: var(--text); }
+
 .cloud-list { margin-top: 12px; }
 .cloud-item {
   display: grid;

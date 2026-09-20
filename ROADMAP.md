@@ -1,7 +1,8 @@
 # 珊瑚音乐 · 升级路线图（ROADMAP）
 
 > 在线音乐播放器（纯静态 · 可部署 Cloudflare Pages）
-> **状态：阶段 1–4 已完成；阶段 5「体验深化」5A–5G ✅ 全部交付；阶段 6「云端能力」6A/6B ✅（6C 待开发）。**
+> **状态：阶段 1–4 已完成；阶段 5「体验深化」5A–5G ✅ 全部交付；阶段 6「云端能力」6A/6B/6D ✅（6C 待开发）。**
+> 6D 为鉴权升级：v1「口令即密钥」→ v2「账号密码 + Bearer 会话」，旧口令空间可一键接管。
 
 ---
 
@@ -146,33 +147,54 @@
 
 ---
 
-## 阶段 6 · 云端能力（Cloudflare Pages Functions + R2）— ✅ 主体已交付
+## 阶段 6 · 云端能力（Cloudflare Pages Functions + R2 + D1）— ✅ 已交付
 
-> R2 存储桶 `music-audio` 已创建，Pages 项目 `online-music` 已绑定 `MUSIC_BUCKET`。
-> **鉴权采用「口令即密钥」**：口令不下发、不保存，服务端只保存由它派生的空间标识（SHA-256 前 20 位十六进制）。
-> 写操作（上传 / 删除 / 同步 / 列表）需请求头 `X-Coral-Key`；音频播放用 `?s=<slug>`（`<audio src>` 无法带自定义头）。
-> 因此 slug 泄漏只等于「只读可播放」泄漏，不影响写权限，也不泄漏口令本身。
-> 刻意不用 PBKDF2：校验过程不存在「口令比对」，任何口令都会映射出一个空间，加迭代只会撞上 Workers 的 CPU 上限；
-> 真正的强度来自口令长度，故强制 ≥ 10 位并提供随机口令生成。
+> R2 存储桶 `music-audio`、D1 库 `online-music-db`（UUID `adf62ad1-0c09-4c7f-bcbc-3452e1f7fea0`）已创建，
+> Pages 项目需绑定 `MUSIC_BUCKET`（R2）与 `DB`（D1）两个变量。
+>
+> **鉴权在 6D 从「口令即密钥」升级为「账号密码 + Bearer 会话」**：
+> 注册时服务端随机分配 20 位十六进制空间标识（与密码无关），密码只存加盐 PBKDF2-SHA256 派生值；
+> 写操作一律要求 `Authorization: Bearer <令牌>`，只有音频播放用 `?s=<slug>`（`<audio src>` 无法带自定义头）。
+> 因此 slug 泄漏只等于「只读可播放」泄漏，不影响写权限，也无法从 slug 反推账号。
+>
+> v1 的口令空间没有丢失 —— 通过 `/api/auth/adopt` 可用旧口令把数据**复制**接管到账号名下（只复制、不删源，
+> 因为那个口令验证不了归属，不具备破坏性副作用才安全）。
 
 ### 6A · Pages Functions 后端（P0）— ✅ 已完成
 | 条目 | 落地点 | 状态 |
 |------|--------|------|
-| 纯逻辑层：口令派生、key 规约、Range 解析、同步负载白名单 | `functions/_lib/core.mjs` | ✅ |
+| 纯逻辑层：key 规约、Range 解析、同步负载白名单（v1 口令 slug 仅留作接管） | `functions/_lib/core.mjs` | ✅ |
+| 账号纯逻辑：PBKDF2 派生、用户名/密码规则、东八区时间、用户视图 | `functions/_lib/account.mjs` | ✅ |
+| 会话层：Bearer 签发/校验/滑动续期/登出、登录限流、requireCloud 组合判断 | `functions/_lib/session.mjs` | ✅ |
+| 账号表数据访问层（注册落库、登录善后、迁移标记） | `functions/_lib/users.mjs` | ✅ |
 | 云端音频库：列表 / 上传 / 流式播放（Range）/ 删除 | `functions/api/audio/index.mjs`、`functions/api/audio/[id].mjs` | ✅ |
 | 跨设备同步：歌单 / 远程曲目 / 歌词 / 设置 / 统计 / 播放进度 | `functions/api/state.mjs` | ✅ |
-| 在线音源代理（服务端拉流绕开跨域 → 恢复真实频谱，EQ 对在线歌生效） | `functions/api/proxy.mjs`（域名白名单 + 只回传音频类型） | ✅ |
-| 链路自检端点（排查绑定 / 空间 / 曲目数） | `functions/api/ping.mjs` | ✅ |
+| 在线音源代理（服务端拉流绕开跨域 → 恢复真实频谱，EQ 对在线歌生效） | `functions/api/proxy.mjs`（域名白名单 + 空间归属校验） | ✅ |
+| 链路自检端点（排查 R2 / D1 绑定、账号表、登录态、曲目数） | `functions/api/ping.mjs` | ✅ |
+| D1 建表脚本（users / sessions / login_attempts + 三个索引） | `migrations/0000_accounts.sql` | ✅ |
 
 ### 6B · 前端云能力（P0）— ✅ 已完成
 | 条目 | 落地点 | 状态 |
 |------|--------|------|
-| 云能力模块：口令管理、请求封装、上传、列表、同步、代理地址组装 | `js/cloud.js` | ✅ |
-| 云端面板：口令设置 / 生成随机口令 / 上传本地歌曲 / 云端曲库（播放·入库·删除）/ 存到云端 / 从云端恢复 | 顶栏「☁️ 云端」 | ✅ |
+| 账号模块：注册 / 登录 / 登出 / 会话持久化 / 旧口令接管 | `js/account.js` | ✅ |
+| 云能力模块：登录态、请求封装、上传、列表、同步、代理地址组装 | `js/cloud.js` | ✅ |
+| 云端面板：登录注册表单 / 账号条 / 上传本地歌曲 / 云端曲库（播放·入库·删除）/ 存到云端 / 从云端恢复 / 接管旧空间 | 顶栏「☁️ 云端」 | ✅ |
 | 云端与代理音频接入 Web Audio（真频谱 + EQ 生效） | `player.js` `isAnalysable()` 同源判定 | ✅ |
 | Service Worker 不拦截 `/api/*`（206 分片进不了 Cache API，音频体量大） | `sw.js` | ✅ |
 | 无 Functions 环境下的可操作降级提示（本地静态调试不静默失败） | `app.js` `cloudHintFor()` | ✅ |
-| 云端链路端到端验证（真实 Pages 运行时 28 项断言） | `tests/probe/cloud-e2e.mjs` | ✅ |
+| 云端链路端到端验证（真实 Pages 运行时 + 本地模拟 R2/D1，67 项断言） | `tests/probe/cloud-e2e.mjs` | ✅ |
+
+### 6D · 账号密码登录（替代 v1「口令即密钥」）— ✅ 已完成
+| 条目 | 落地点 | 状态 |
+|------|--------|------|
+| 注册 / 登录 / 登出 / 当前账号 四个端点 | `functions/api/auth/{register,login,logout,me}.mjs` | ✅ |
+| 旧口令空间接管（分批搬运、幂等、只复制不删源、记录 migrated_from） | `functions/api/auth/adopt.mjs` | ✅ |
+| 密码安全：每账号随机盐 + 可配迭代数；迭代数提高后老账号登录时自动升级 | `_lib/account.mjs` `noteLogin()` | ✅ |
+| 防账号枚举：账号不存在也走一次等价哈希，密码错与账号不存在返回同一文案 | `login.mjs` | ✅ |
+| 防爆破：15 分钟窗口内 8 次失败后限流（跨 isolate 一致，落 D1） | `_lib/session.mjs` | ✅ |
+| 会话安全：30 天有效期 + 剩余不足 7 天自动续期 + 登出只删令牌不动数据 | `_lib/session.mjs` | ✅ |
+| 本地播放免登录，仅云端功能需登录（与 idle-exchange 策略一致） | `app.js` `renderCloudAuth()` | ✅ |
+| 用真实运行时实测 PBKDF2 迭代数与 CPU 预算 | `scripts/probe-auth-cost.mjs`、cloud-e2e 打印登录耗时 | ✅ |
 
 ### 6C · 分享与配额（P1）— ⏳ 待开发
 | 条目 | 技术依赖 | 状态 |
@@ -180,6 +202,7 @@
 | 分享歌单短链（key 规约里已预留 `share/<code>.json`） | 复用 R2 + 只读端点 | ⏳ |
 | 云端音频去重与配额提示 | Functions | ⏳ |
 | 服务端聚合音源（规避前端限流、隐藏子源细节） | Workers | ⏳ |
+| 密码找回 / 邮箱验证（当前忘记密码只能重新注册） | 需 Resend 或 Cloudflare Access，参考 idle-exchange | ⏳ |
 
 ---
 

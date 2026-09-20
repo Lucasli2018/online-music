@@ -1045,31 +1045,127 @@
   function cloudHintFor(e) {
     var status = e && e.status;
     if (status === 404) return '（本地静态服务器没有 /api 端点，需部署到 Cloudflare Pages）';
-    if (status === 401) return '（口令不合法，需 ≥10 位）';
-    if (status === 503) return '（云端 R2 绑定未生效，检查 Pages 项目的 MUSIC_BUCKET 绑定）';
+    if (status === 401) return '（用户名或密码不正确，或登录已过期）';
+    if (status === 403) return '（该账号已被停用）';
+    if (status === 409) return '（该用户名已被注册，换个名字或直接登录）';
+    if (status === 429) return '（失败次数过多，请等十几分钟再试）';
     if (status === 413) return '（文件超出单次上传上限）';
+    if (status === 503) return '（云端绑定未生效，检查 Pages 项目的 MUSIC_BUCKET / DB 绑定）';
     if (!status) return '（网络不可达或不是 Pages 环境）';
     return '';
   }
   function cloudSpaceLabel() {
     var lbl = $('cloud-space');
     if (!lbl) return;
-    if (!CM.Cloud.hasPass()) { lbl.textContent = '未设置口令'; return; }
+    if (!CM.Cloud.isLoggedIn()) { lbl.textContent = '未登录'; return; }
     var slug = CM.Cloud.getSlug();
     var last = CM.Cloud.getLastSync();
     lbl.textContent = '空间 ' + (slug ? slug.slice(0, 8) + '…' : '（待连接）') +
       (last ? ' · 上次同步 ' + new Date(last).toLocaleString() : '');
   }
 
-  function openCloud() {
-    $('cloud-modal').classList.remove('hidden');
-    var input = $('cloud-pass');
-    if (input && !input.value) input.value = CM.Cloud.getPass();
+  /* 登录态切换：未登录显示表单，已登录显示账号条 + 云端操作区 */
+  function renderCloudAuth() {
+    var logged = CM.Cloud.isLoggedIn();
+    var authBox = $('cloud-auth');
+    var acc = $('cloud-account');
+    var body = $('cloud-body');
+    if (authBox) authBox.classList.toggle('hidden', logged);
+    if (acc) acc.classList.toggle('hidden', !logged);
+    if (body) body.classList.toggle('hidden', !logged);
+
+    var u = CM.Cloud.currentUser();
+    var label = (u && (u.displayName || u.username)) || '';
+    var name = $('cloud-me-name');
+    var av = $('cloud-me-avatar');
+    if (name) name.textContent = label || '—';
+    if (av) av.textContent = (label || '♪').slice(0, 1).toUpperCase();
     cloudSpaceLabel();
-    if (!CM.Cloud.hasPass()) { cloudStatus('先设置口令（≥10 位），点「保存」连接云端'); return; }
+  }
+
+  function authMsg(msg, isErr) {
+    var el = $('auth-msg');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('cloud-err', !!isErr);
+  }
+
+  var authMode = 'login';
+  var authBusy = false;
+
+  function setAuthMode(mode) {
+    authMode = mode === 'register' ? 'register' : 'login';
+    var tl = $('auth-tab-login'), tr = $('auth-tab-register');
+    if (tl) tl.classList.toggle('active', authMode === 'login');
+    if (tr) tr.classList.toggle('active', authMode === 'register');
+    var row = $('auth-display-row');
+    if (row) row.classList.toggle('hidden', authMode !== 'register');
+    var pw = $('auth-password');
+    // 让浏览器的密码管理器知道这是「新建密码」还是「已有密码」
+    if (pw) pw.setAttribute('autocomplete', authMode === 'login' ? 'current-password' : 'new-password');
+    setAuthBusy(false);
+    authMsg(authMode === 'login'
+      ? '登录后即可看到你自己的云端曲库；本地播放不需要登录。'
+      : '用户名注册后不可修改，昵称可以随便改。密码忘记无法找回，但可以重新注册。');
+  }
+
+  function setAuthBusy(busy, label) {
+    authBusy = !!busy;
+    var btn = $('auth-submit');
+    if (!btn) return;
+    btn.disabled = !!busy;
+    btn.textContent = busy ? (label || '处理中…') : (authMode === 'login' ? '登录' : '注册并登录');
+  }
+
+  function authSubmit() {
+    if (authBusy) return;
+    var unameEl = $('auth-username'), pwEl = $('auth-password');
+    if (!unameEl || !pwEl) return;
+    var uname = (unameEl.value || '').trim();
+    var pw = pwEl.value || '';
+
+    var badName = CM.Account.usernameProblem(uname);
+    if (badName) { authMsg(badName, true); unameEl.focus(); return; }
+    if (!pw) { authMsg('请填写密码', true); pwEl.focus(); return; }
+    if (authMode === 'register') {
+      var badPw = CM.Account.passwordProblem(pw);
+      if (badPw) { authMsg(badPw, true); pwEl.focus(); return; }
+    }
+
+    var isLogin = authMode === 'login';
+    setAuthBusy(true, isLogin ? '登录中…' : '注册中…');
+    var task = isLogin
+      ? CM.Account.login(uname, pw)
+      : CM.Account.register(uname, pw, ($('auth-display') && $('auth-display').value) || '');
+
+    task.then(function (user) {
+      pwEl.value = '';
+      var who = (user && (user.displayName || user.username)) || uname;
+      toast((isLogin ? '已登录：' : '注册成功，已登录：') + who);
+      authMsg('');
+      renderCloudAuth();
+      return cloudConnect();
+    }).catch(function (e) {
+      authMsg(e.message + cloudHintFor(e), true);
+    }).then(function () { setAuthBusy(false); });
+  }
+
+  function cloudLogout() {
+    if (!global.confirm('退出登录？本机曲库与已下载的音频不受影响，云端数据仍在账号里。')) return;
+    CM.Account.logout().then(function () {
+      CM.Cloud.clearSlug();
+      renderCloudAuth();
+      if ($('auth-password')) $('auth-password').value = '';
+      authMsg('已退出登录。');
+      toast('已退出登录');
+    });
+  }
+
+  /* 登录后统一走一次：自检绑定 → 空间信息 → 拉云端曲库列表 */
+  function cloudConnect() {
     cloudStatus('正在连接云端…');
-    CM.Cloud.ping().then(function (d) {
-      if (!d.ok) { cloudStatus('云端未就绪：' + (d.reason || 'R2 绑定不可用'), true); return; }
+    return CM.Cloud.ping().then(function (d) {
+      if (!d || !d.ok) { cloudStatus('云端未就绪：' + ((d && d.reason) || 'R2 / D1 绑定不可用'), true); return; }
       cloudStatus('已连接 · 云端曲目 ' + (d.cloudTracks || 0) + ' 首');
       cloudSpaceLabel();
       return cloudRefreshList();
@@ -1077,34 +1173,51 @@
       cloudStatus('云端不可用：' + e.message + cloudHintFor(e), true);
     });
   }
-  function closeCloud() { $('cloud-modal').classList.add('hidden'); }
 
-  function cloudSavePass() {
-    var v = ($('cloud-pass').value || '').trim();
-    var problem = CM.Cloud.passProblem(v);
-    if (problem) { cloudStatus(problem, true); toast(problem); return; }
-    CM.Cloud.setPass(v);
-    cloudSpaceLabel();
-    cloudStatus('口令已保存，正在连接…');
-    CM.Cloud.ping().then(function (d) {
-      if (!d.ok) { cloudStatus('云端未就绪：' + (d.reason || 'R2 绑定不可用'), true); return; }
-      cloudStatus('已连接 · 云端曲目 ' + (d.cloudTracks || 0) + ' 首');
-      cloudSpaceLabel();
+  /* 接管 v1「同步口令」空间的数据（只复制，不删源） */
+  function cloudAdopt() {
+    var el = $('adopt-pass');
+    var pass = (el && el.value || '').trim();
+    if (pass.length < 10) { toast('旧口令至少 10 位'); return; }
+    var btn = $('adopt-run');
+    if (btn) { btn.disabled = true; btn.textContent = '搬运中…'; }
+    cloudStatus('正在接管旧空间数据…');
+
+    CM.Cloud.adoptOldPass(pass, function (r) {
+      cloudStatus('搬运中… 已复制 ' + r.copied + ' / 共 ' + r.total + ' 个文件');
+    }).then(function (r) {
+      if (!r.total) { cloudStatus('该口令下没有找到云端曲目，确认口令是否是最初那一串'); return; }
+      var bits = ['已接管 ' + r.copied + ' 个音频'];
+      if (r.skipped) bits.push('跳过 ' + r.skipped + ' 个（账号里已存在）');
+      if (r.state === 'adopted') bits.push('歌单备份也已接管');
+      else if (r.state === 'skipped') bits.push('账号里已有备份，未覆盖');
+      if (!r.done) bits.push('尚未搬完，可再点一次继续');
+      cloudStatus(bits.join('，'));
+      toast('接管完成：' + r.copied + ' 个音频');
+      if (el) el.value = '';
       return cloudRefreshList();
     }).catch(function (e) {
-      cloudStatus('连接失败：' + e.message + cloudHintFor(e), true);
+      cloudStatus('接管失败：' + e.message + cloudHintFor(e), true);
+    }).then(function () {
+      if (btn) { btn.disabled = false; btn.textContent = '接管数据'; }
     });
   }
 
-  function cloudGenPass() {
-    $('cloud-pass').value = CM.Cloud.randomPass();
-    $('cloud-pass').type = 'text';
-    $('cloud-pass-show').checked = true;
-    toast('已生成随机口令，请抄下来保存');
+  function openCloud() {
+    $('cloud-modal').classList.remove('hidden');
+    renderCloudAuth();
+    if (!CM.Cloud.isLoggedIn()) {
+      setAuthMode(authMode);
+      if ($('auth-username')) $('auth-username').focus();
+      return;
+    }
+    cloudConnect();
   }
 
+  function closeCloud() { $('cloud-modal').classList.add('hidden'); }
+
   function cloudRefreshList() {
-    if (!CM.Cloud.hasPass()) return Promise.resolve();
+    if (!CM.Cloud.isLoggedIn()) return Promise.resolve();
     cloudStatus('正在读取云端曲库…');
     return CM.Cloud.listCloud().then(function (d) {
       renderCloudList((d && d.items) || []);
@@ -1122,9 +1235,9 @@
     if (!items.length) {
       var hint = document.createElement('p');
       hint.className = 'empty-hint';
-      hint.textContent = CM.Cloud.hasPass()
+      hint.textContent = CM.Cloud.isLoggedIn()
         ? '云端还没有歌曲。点上方「⤴ 本地歌曲上传到云端」把本机上传输的音频传上去。'
-        : '先设置口令。';
+        : '先登录账号。';
       box.appendChild(hint);
       return;
     }
@@ -1196,7 +1309,7 @@
   }
 
   function cloudUploadAll() {
-    if (!CM.Cloud.hasPass()) { toast('请先设置并保存口令'); return; }
+    if (!CM.Cloud.isLoggedIn()) { toast('请先登录账号'); return; }
     var locals = Lib.allTracks().filter(function (t) { return t.source === 'local' && t.file; });
     if (!locals.length) { toast('没有可上传的本地歌曲（只有本机上传输的音频能传到云端）'); return; }
     if (!global.confirm('将 ' + locals.length + ' 首本地歌曲上传到云端？大文件较慢，请保持页面打开。')) return;
@@ -1279,7 +1392,7 @@
   }
 
   function cloudSyncUp() {
-    if (!CM.Cloud.hasPass()) { toast('请先设置并保存口令'); return; }
+    if (!CM.Cloud.isLoggedIn()) { toast('请先登录账号'); return; }
     cloudStatus('正在上传歌单与设置…');
     CM.Cloud.pushState(collectCloudState()).then(function (d) {
       var kb = Math.max(1, Math.round(((d && d.bytes) || 0) / 1024));
@@ -1292,7 +1405,7 @@
   }
 
   function cloudSyncDown() {
-    if (!CM.Cloud.hasPass()) { toast('请先设置并保存口令'); return; }
+    if (!CM.Cloud.isLoggedIn()) { toast('请先登录账号'); return; }
     if (!global.confirm('从云端恢复会把云端的歌单 / 远程曲目 / 歌词 / 设置合并到本机（本地上传的音频文件不受影响），继续？')) return;
     cloudStatus('正在读取云端备份…');
     CM.Cloud.pullState().then(function (d) {
@@ -2371,16 +2484,27 @@
     bindEl('btn-cloud', 'click', openCloud);
     bindEl('cloud-close', 'click', closeCloud);
     bindEl('cloud-modal', 'click', function (e) { if (e.target === this) closeCloud(); });
-    bindEl('cloud-pass-save', 'click', cloudSavePass);
-    bindEl('cloud-pass-gen', 'click', cloudGenPass);
-    bindEl('cloud-pass-show', 'change', function () {
-      $('cloud-pass').type = this.checked ? 'text' : 'password';
+    bindEl('auth-tab-login', 'click', function () { setAuthMode('login'); });
+    bindEl('auth-tab-register', 'click', function () { setAuthMode('register'); });
+    bindEl('auth-submit', 'click', authSubmit);
+    // 表单里按回车直接提交（鼠标用户不用去够按钮）
+    ['auth-username', 'auth-password', 'auth-display'].forEach(function (id) {
+      bindEl(id, 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); authSubmit(); } });
     });
-    bindEl('cloud-pass', 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); cloudSavePass(); } });
+    bindEl('cloud-logout', 'click', cloudLogout);
+    bindEl('adopt-run', 'click', cloudAdopt);
+    bindEl('adopt-pass', 'keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); cloudAdopt(); } });
     bindEl('cloud-refresh', 'click', cloudRefreshList);
     bindEl('cloud-upload-all', 'click', cloudUploadAll);
     bindEl('cloud-sync-up', 'click', cloudSyncUp);
     bindEl('cloud-sync-down', 'click', cloudSyncDown);
+
+    // 启动时验证本地令牌：有效就静默保持登录，失效则回到登录表单
+    if (CM.Account && CM.Account.isLoggedIn()) {
+      CM.Account.refresh().then(function () {
+        renderCloudAuth();
+      }).catch(function () { renderCloudAuth(); });
+    }
 
     $('btn-load-samples').addEventListener('click', function () {
       var have = {};

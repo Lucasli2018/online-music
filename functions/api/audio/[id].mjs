@@ -1,13 +1,15 @@
 /* /api/audio/:id —— 单个云端音频
- *   GET    ?s=<slug>                流式播放，支持 Range（进度条拖动必需）
- *   DELETE 需口令头，删除该曲目
+ *   GET    ?s=<slug>   流式播放，支持 Range（进度条拖动必需）
+ *   DELETE 需登录，删除该曲目
  *
- * 鉴权说明：<audio src> 无法携带自定义请求头，因此读操作以 ?s=<slug> 作凭据
- * （slug 由口令派生、不反向暴露口令）。写操作一律要求 X-Coral-Key 口令头。
+ * 鉴权说明：<audio src> 无法携带自定义请求头，因此读操作以 ?s=<slug> 作凭据。
+ * slug 是账号注册时随机生成的 20 位 hex，不含任何账号信息、也无法反推账号；
+ * 它泄露只意味着「该空间的音频能被播放」，写操作仍然一律要求 Bearer 令牌。
  */
 import {
-  audioPrefix, authSlug, contentTypeOf, json, parseRange, safeId
+  audioPrefix, contentTypeOf, json, parseRange, safeId
 } from '../../_lib/core.mjs';
+import { requireCloud } from '../../_lib/session.mjs';
 
 const SLUG_RE = /^[0-9a-f]{20}$/;
 
@@ -65,10 +67,9 @@ export async function onRequestGet({ request, env, params }) {
 }
 
 export async function onRequestDelete({ request, env, params }) {
-  if (!env || !env.MUSIC_BUCKET) return json({ error: '未绑定 R2' }, 503);
-
-  const slug = await authSlug(request);
-  if (!slug) return json({ error: '口令不合法（至少 10 位）' }, 401);
+  const a = await requireCloud(request, env);
+  if (a.error) return json({ error: a.error }, a.status);
+  const slug = a.slug;
 
   const id = safeId(Array.isArray(params.id) ? params.id.join('/') : params.id);
   if (!id) return json({ error: '曲目 id 不合法' }, 400);

@@ -1,16 +1,16 @@
-/* /api/audio —— 云端音频库
- *   GET  列表（需口令头）
- *   POST 上传（multipart/form-data: file / id / title / artist，需口令头）
+/* /api/audio —— 云端音频库（写操作需登录）
+ *   GET  列表
+ *   POST 上传（multipart/form-data: file / id / title / artist）
  */
 import {
-  authSlug, audioKey, audioPrefix, contentTypeOf, extOf,
-  json, MAX_UPLOAD, passProblem, safeId, slugOf
+  audioKey, audioPrefix, contentTypeOf, extOf, json, MAX_UPLOAD, safeId
 } from '../../_lib/core.mjs';
+import { requireCloud } from '../../_lib/session.mjs';
 
 export async function onRequestGet({ request, env }) {
-  const slug = await authSlug(request);
-  if (!slug) return json({ error: '口令不合法（至少 10 位）' }, 401);
-  if (!env || !env.MUSIC_BUCKET) return json({ error: '未绑定 R2（MUSIC_BUCKET）' }, 503);
+  const a = await requireCloud(request, env);
+  if (a.error) return json({ error: a.error }, a.status);
+  const slug = a.slug;
 
   // 注意：R2 的 list 默认不返回 httpMetadata / customMetadata，必须显式 include，
   // 否则标题、歌手、内容类型全都会是空的（本地模拟与线上行为一致，已用 E2E 验证）
@@ -37,11 +37,9 @@ export async function onRequestGet({ request, env }) {
 }
 
 export async function onRequestPost({ request, env }) {
-  const pass = request.headers.get('X-Coral-Key') || '';
-  const bad = passProblem(pass);
-  if (bad) return json({ error: bad }, 401);
-  if (!env || !env.MUSIC_BUCKET) return json({ error: '未绑定 R2（MUSIC_BUCKET）' }, 503);
-  const slug = await slugOf(pass);
+  const a = await requireCloud(request, env);
+  if (a.error) return json({ error: a.error }, a.status);
+  const slug = a.slug;
 
   const ct = request.headers.get('Content-Type') || '';
   if (ct.indexOf('multipart/form-data') < 0) {

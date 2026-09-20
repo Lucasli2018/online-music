@@ -8,21 +8,22 @@
  *   state/<slug>.json         曲库 / 歌单 / 设置 / 统计 / 播放进度
  *   share/<code>.json         公开分享的歌单快照（只读）
  *
- * 鉴权模型（务实的「口令即密钥」）
- *   slug = SHA-256(SALT | 口令) 前 20 位十六进制。
- *   口令只出现在请求头 X-Coral-Key，服务端据此算出自己的空间；
- *   音频播放地址用 ?s=<slug>（<audio src> 无法带自定义头），
- *   因此 slug 泄漏只等于「只读可播放」泄漏，不泄漏口令本身，也不会泄漏写权限。
- *   注意：这里刻意不做 PBKDF2 —— 校验过程不存在「口令比对」，任何口令都会映射出一个空间，
- *   提高迭代次数对防爆破毫无帮助，反而会撞上 Workers 的 CPU 时间上限。
- *   真正的强度来自口令长度，故强制 ≥ 10 位并在 UI 提供随机口令生成。
+ * 鉴权模型（v2：账号密码）
+ *   users 表 + sessions 表（见 migrations/0000_accounts.sql）。
+ *   写操作一律走 _lib/session.mjs 的 requireUser()，由账号行上的 space_slug 决定 R2 空间。
+ *   空间 slug 是注册时随机生成的 20 位 hex —— 与密码无关，也无法从 slug 反推账号。
+ *
+ *   唯一的例外是读音频：<audio src> 无法携带自定义请求头，所以 /api/audio/:id?s=<slug>
+ *   用 slug 本身当读凭据。因此 slug 泄漏只等于「该空间音频能被播放」，不泄漏写权限，
+ *   也不泄漏任何账号信息 —— 这是刻意接受的权衡。
+ *
+ *   slugOf() 现在只服务于一件历史遗留的事：把 v1「口令即密钥」空间接管到账号名下
+ *   （见 api/auth/adopt.mjs）。新代码不要再用它做鉴权。
  */
 
-export const SALT = 'coral-music-v1';
-export const PBKDF_PREFIX = 'coral';
-export const MIN_PASS = 10;
+export const SALT = 'coral-music-v1';         // v1 口令空间的盐，仅接管旧数据时使用
+export const MIN_PASS = 10;                   // 旧口令最短长度（仅接管时校验）
 export const MAX_UPLOAD = 60 * 1024 * 1024;   // 单文件 60MB（Pages Functions 请求体上限内）
-export const SIGN_TTL = 6 * 3600;             // 播放地址有效期（秒）
 
 const HEX = '0123456789abcdef';
 
@@ -46,41 +47,13 @@ export function json(data, status = 200, extra = {}) {
   });
 }
 
-/* ---------- 鉴权 ---------- */
-export function passProblem(pass) {
-  const p = String(pass || '');
-  if (!p) return '缺少同步口令';
-  if (p.length < MIN_PASS) return '口令至少 ' + MIN_PASS + ' 位';
-  if (p.length > 128) return '口令过长';
-  return null;
-}
-
-export function isPassOk(pass) { return passProblem(pass) === null; }
-
+/* ---------- v1 遗留：旧口令 → 空间 slug ---------- */
+// 只给 adopt 用：把当年的「口令即密钥」空间算出来，再把里面的对象搬到账号名下。
+// 不属于鉴权路径 —— 它无法证明任何归属，所以任何调用方都不得用它授权写操作。
 export async function slugOf(pass) {
   const data = new TextEncoder().encode(SALT + '|' + String(pass || ''));
   const digest = await crypto.subtle.digest('SHA-256', data);
   return toHex(digest).slice(0, 20);
-}
-
-// 从请求头取口令并换算为空间 slug；不合法返回 null
-export async function authSlug(request) {
-  const pass = request.headers.get('X-Coral-Key') || '';
-  if (!isPassOk(pass)) return null;
-  return slugOf(pass);
-}
-
-// 生成一份便于抄写的随机口令（4 组 4 字符）
-export function randomPass() {
-  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
-  const buf = new Uint8Array(16);
-  crypto.getRandomValues(buf);
-  let s = '';
-  for (let i = 0; i < 16; i++) {
-    s += alphabet[buf[i] % alphabet.length];
-    if (i % 4 === 3 && i !== 15) s += '-';
-  }
-  return s;
 }
 
 /* ---------- key 规约 ---------- */

@@ -316,28 +316,66 @@
         </div>
       </div>
 
-      <div class="cloud-pass">
-        <label for="cloud-pass">同步口令（至少 10 位）</label>
-        <div class="cloud-pass-row">
-          <input id="cloud-pass" type="password" placeholder="输入口令，例如 coral-2026-abc" autocomplete="new-password" />
-          <button id="cloud-pass-gen" class="chip" title="生成一个随机口令">🎲</button>
-          <button id="cloud-pass-save" class="btn btn-primary">保存</button>
+      <!-- 未登录：账号密码登录 / 注册 -->
+      <div id="cloud-auth" class="auth-box">
+        <div class="auth-tabs">
+          <button id="auth-tab-login" class="auth-tab active" type="button">登录</button>
+          <button id="auth-tab-register" class="auth-tab" type="button">注册新账号</button>
         </div>
-        <div class="cloud-meta">
-          <label class="cloud-show"><input id="cloud-pass-show" type="checkbox" /> 显示口令</label>
+
+        <div class="auth-field">
+          <label for="auth-username">用户名</label>
+          <input id="auth-username" type="text" autocomplete="username" spellcheck="false"
+                 placeholder="3-24 位：小写字母 / 数字 / _ / -" />
+        </div>
+
+        <div class="auth-field">
+          <label for="auth-password">密码</label>
+          <input id="auth-password" type="password" autocomplete="current-password"
+                 placeholder="至少 8 位" />
+        </div>
+
+        <div id="auth-display-row" class="auth-field hidden">
+          <label for="auth-display">昵称（选填）</label>
+          <input id="auth-display" type="text" maxlength="32" placeholder="展示用，默认同用户名" />
+        </div>
+
+        <button id="auth-submit" class="btn btn-primary auth-submit">登录</button>
+        <p id="auth-msg" class="online-status"></p>
+        <p class="cloud-hint">账号只用来确定「云端曲库属于谁」：服务端存的是 PBKDF2 派生值，不存明文密码；本机只留一枚可随时作废的登录令牌。
+          <b>本地播放不需要登录</b>，只有上传云端、云端曲库、歌单同步需要。</p>
+      </div>
+
+      <!-- 已登录：账号信息 + 云端操作 -->
+      <div id="cloud-account" class="cloud-me hidden">
+        <span id="cloud-me-avatar" class="cloud-me-avatar">♪</span>
+        <div class="cloud-me-text">
+          <span id="cloud-me-name" class="cloud-me-name">—</span>
           <span id="cloud-space" class="cloud-space">未连接</span>
         </div>
-        <p class="cloud-hint">口令即密钥：服务端只保存由它派生出的空间标识，不保存口令本身；<b>忘记口令等于云端数据无法再取回</b>。换设备时输入同一口令即可看到同一份云端曲库。</p>
+        <button id="cloud-logout" class="chip">退出登录</button>
       </div>
 
-      <div class="cloud-actions">
-        <button id="cloud-upload-all" class="btn">⤴ 本地歌曲上传到云端</button>
-        <button id="cloud-sync-up" class="btn">⤒ 歌单与设置存到云端</button>
-        <button id="cloud-sync-down" class="btn">⤓ 从云端恢复</button>
-      </div>
+      <div id="cloud-body" class="hidden">
+        <details id="adopt-box" class="cloud-adopt">
+          <summary>有旧版「同步口令」空间的数据？点这里接管</summary>
+          <div class="cloud-pass-row">
+            <input id="adopt-pass" type="password" placeholder="当年的同步口令（≥10 位）" autocomplete="off" />
+            <button id="adopt-run" class="btn">接管数据</button>
+          </div>
+          <p class="cloud-hint">只把旧空间里的云端曲目与歌单备份<b>复制</b>到当前账号，不会删除旧数据。
+            搬完在下面云端曲库点「＋」即可加入本地曲库。</p>
+        </details>
 
-      <p id="cloud-status" class="online-status"></p>
-      <div id="cloud-list" class="cloud-list"></div>
+        <div class="cloud-actions">
+          <button id="cloud-upload-all" class="btn">⤴ 本地歌曲上传到云端</button>
+          <button id="cloud-sync-up" class="btn">⤒ 歌单与设置存到云端</button>
+          <button id="cloud-sync-down" class="btn">⤓ 从云端恢复</button>
+        </div>
+
+        <p id="cloud-status" class="online-status"></p>
+        <div id="cloud-list" class="cloud-list"></div>
+      </div>
     </div>
   </div>
 
@@ -446,6 +484,7 @@
   <script src="js/visualizer.js"></script>
   <script src="js/id3.js"></script>
   <script src="js/library.js"></script>
+  <script src="js/account.js"></script>
   <script src="js/cloud.js"></script>
   <script src="js/player.js"></script>
   <script src="js/playlist.js"></script>

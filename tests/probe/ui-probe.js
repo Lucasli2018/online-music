@@ -247,26 +247,55 @@ function check(name, ok, extra) {
     check('切到「最近」后只显示听过的曲目', recentTracks,
       '曲目数=' + (await evalJS('document.querySelectorAll("#playlist li.track").length')));
 
-    // 9. 云面板：绑定生效 + 无 Functions 环境下正确降级
+    // 9. 云面板：账号登录 UI + 无 Functions 环境下正确降级
     check('顶栏存在「☁️ 云端」按钮', await evalJS('!!document.getElementById("btn-cloud")'));
     await clickSel('#btn-cloud');
     check('点击后云端弹窗打开', await waitFor('!document.getElementById("cloud-modal").classList.contains("hidden")'));
-    var noPass = await evalJS('document.getElementById("cloud-status").textContent');
-    check('未设置口令时给出引导文案', /口令/.test(noPass), noPass);
 
-    await evalJS('(function(){document.getElementById("cloud-pass").value="short";})()');
-    await clickSel('#cloud-pass-save');
-    await sleep(200);
-    var shortMsg = await evalJS('document.getElementById("cloud-status").textContent');
-    check('口令过短时拒绝保存并提示', /10 位/.test(shortMsg), shortMsg);
+    check('未登录时显示登录表单',
+      await evalJS('!document.getElementById("cloud-auth").classList.contains("hidden")'));
+    check('未登录时不渲染云端内容区',
+      await evalJS('document.getElementById("cloud-body").classList.contains("hidden")'));
+    check('未登录时不显示账号条',
+      await evalJS('document.getElementById("cloud-account").classList.contains("hidden")'));
+    check('登录表单具备用户名 / 密码 / 提交三件套',
+      await evalJS('!!document.getElementById("auth-username") && !!document.getElementById("auth-password") && !!document.getElementById("auth-submit")'));
+    check('默认处于登录模式',
+      (await evalJS('document.getElementById("auth-submit").textContent')) === '登录');
+    check('登录模式不显示昵称输入框',
+      await evalJS('document.getElementById("auth-display-row").classList.contains("hidden")'));
+    check('表单里没有残留的「口令」输入框',
+      await evalJS('!document.getElementById("cloud-pass")'));
 
-    await evalJS('(function(){document.getElementById("cloud-pass").value="probe-pass-2026";})()');
-    await clickSel('#cloud-pass-save');
+    await clickSel('#auth-submit');
+    await sleep(150);
+    var emptyMsg = await evalJS('document.getElementById("auth-msg").textContent');
+    check('空用户名提交被拦下并提示', /用户名/.test(emptyMsg), emptyMsg);
+
+    await clickSel('#auth-tab-register');
+    await sleep(120);
+    check('切到注册后显示昵称输入框',
+      await evalJS('!document.getElementById("auth-display-row").classList.contains("hidden")'));
+    check('切到注册后按钮文案变为「注册并登录」',
+      (await evalJS('document.getElementById("auth-submit").textContent')) === '注册并登录');
+
+    await evalJS('(function(){document.getElementById("auth-username").value="probeuser";document.getElementById("auth-password").value="short";})()');
+    await clickSel('#auth-submit');
+    await sleep(150);
+    var shortPw = await evalJS('document.getElementById("auth-msg").textContent');
+    check('密码过短时拒绝提交并提示', /8 位/.test(shortPw), shortPw);
+    check('本地校验不过时不发请求（仍停在注册表单）',
+      await evalJS('!document.getElementById("cloud-auth").classList.contains("hidden")'));
+
+    await evalJS('(function(){document.getElementById("auth-password").value="probe-secret-2026";})()');
+    await clickSel('#auth-submit');
     var degraded = await waitFor(
-      '(function(){var t=document.getElementById("cloud-status").textContent;return t.indexOf("不可用")>=0||t.indexOf("失败")>=0;})()', 6000);
-    var degradeMsg = await evalJS('document.getElementById("cloud-status").textContent');
+      '(function(){return document.getElementById("auth-msg").textContent.length>0;})()', 8000);
+    var degradeMsg = await evalJS('document.getElementById("auth-msg").textContent');
     check('本地无 Functions 时给出降级提示（不静默失败）', degraded, degradeMsg);
-    check('降级提示说明了原因', /api|Pages/.test(degradeMsg), degradeMsg);
+    check('降级提示说明了原因', /api|Pages|网络/.test(degradeMsg), degradeMsg);
+    check('登录失败后仍保持未登录态',
+      await evalJS('document.getElementById("cloud-body").classList.contains("hidden")'));
 
     await clickSel('#cloud-close');
     check('云端弹窗可关闭', await waitFor('document.getElementById("cloud-modal").classList.contains("hidden")'));
