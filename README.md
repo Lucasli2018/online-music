@@ -104,6 +104,7 @@ online-music/
 │   └── 0000_accounts.sql # D1 建表：users / sessions / login_attempts
 ├── scripts/
 │   ├── check.js         # 部署前双闸门：语法校验（node --check）+ 逻辑测试（node --test）
+│   ├── init-d1.mjs      # 线上 D1 初始化：读 migrations/*.sql 走 REST API 逐条建表（免 wrangler 登录）
 │   └── probe-auth-cost.mjs # 实测 PBKDF2 各迭代数耗时，用来决定 AUTH_ITER
 ├── tests/
 │   ├── helpers.js       # 沙箱加载器：在 Node 里加载浏览器端 IIFE 模块（零依赖）
@@ -158,11 +159,17 @@ npx serve online-music
 3. **绑定 D1 到 Pages 项目**：Pages 项目 → **Settings** → **Functions** → **D1 database bindings** → 添加：
    - **Variable name**：`DB`
    - **D1 database**：`online-music-db`（已创建，UUID `adf62ad1-0c09-4c7f-bcbc-3452e1f7fea0`）
-4. **建表**（只需一次，且必须在首次部署前做）：
+4. **建表**（只需一次，且必须在首次部署前做）。两种方式等价，哪个方便用哪个：
    ```bash
+   # 方式 A：走 wrangler（需要先完成 wrangler 登录）
    npx wrangler d1 migrations apply online-music-db --remote
+
+   # 方式 B：走 REST API（无人值守，只需要一个具备 D1 Edit 权限的令牌）
+   CLOUDFLARE_API_TOKEN=xxx node scripts/init-d1.mjs
+   #   --create 可在库不存在时自动创建；TOKEN_FILE=/path/to/token 可指定令牌文件
    ```
-   它会建出 `users` / `sessions` / `login_attempts` 三张表。**不建表的后果是所有云端接口都返回 503「账号库不可用」**。
+   两者都会建出 `users` / `sessions` / `login_attempts` 三张表与 5 个索引。**不建表的后果是所有云端接口都返回 503「账号库不可用」**。
+   脚本是幂等的（全是 `CREATE ... IF NOT EXISTS`），可重复执行；执行完会打印表名、索引与行数用于自检。
 5. **可选：设置 `AUTH_ITER`**（PBKDF2 迭代数，默认 100000）。若线上登录返回 500 / `1102 CPU time exceeded`，
    说明迭代数超出了当前计划的 CPU 预算 —— 在 Pages 项目 → **Settings** → **Environment variables** 里加
    `AUTH_ITER = 20000`（或 10000）后重新部署。用 `node scripts/probe-auth-cost.mjs` 可以先在本机测出各迭代数的耗时量级。
